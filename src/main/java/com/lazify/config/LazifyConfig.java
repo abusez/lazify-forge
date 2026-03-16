@@ -1,0 +1,194 @@
+package com.lazify.config;
+
+import net.minecraftforge.common.config.Configuration;
+
+import java.io.File;
+
+public class LazifyConfig {
+
+    public static final LazifyConfig INSTANCE = new LazifyConfig();
+
+    private Configuration config;
+
+    // API keys
+    private String hypixelKey = "";
+    private String urchinKey  = "";
+
+    // keybind behaviour
+    private boolean keybindHold            = false; // true=show while held, false=toggle
+    private int     keybind                = 41;    // LWJGL key code; 41 = KEY_GRAVE (`)
+
+    // boolean settings
+    private boolean teams                  = true;
+    private boolean teamPrefix             = false;
+    private boolean showYourself           = false;
+    private boolean addTaggedToEnemy       = false;
+    private boolean sendNickedToChat       = true;
+    private boolean sendUrchinReasonToChat = false;
+    private boolean showRanks              = false;
+
+    // column visibility
+    private boolean colEncounters = true;
+    private boolean colUsername   = true;
+    private boolean colStar       = true;
+    private boolean colFkdr       = true;
+    private boolean colWinstreaks = true;
+    private boolean colUrchin     = true;
+    private boolean colSession    = true;
+
+    // int settings
+    private int encountersTimeoutMins = 30;
+    private int sortByIndex           = 2;
+    private int sortMode              = 0;   // 0=ascending, 1=descending
+    private int winstreakMode         = 0;   // 0=Overall 1=Solos 2=Doubles 3=Threes 4=Fours 5=4v4
+
+    // overlay position
+    private int overlayX = 2;
+    private int overlayY = 2;
+
+    // colors
+    private int bgOpacity  = 170;
+    private int bgHue      = 0;
+    private int headerHue  = 290;
+    private int borderHue  = 360;
+
+    private LazifyConfig() {}
+
+    public void load(File configDir) {
+        File cfgFile = new File(configDir, "lazify.cfg");
+        config = new Configuration(cfgFile);
+        config.load();
+        syncFromFile();
+        if (config.hasChanged()) config.save();
+    }
+
+    private void syncFromFile() {
+        keybindHold = config.getBoolean("keybindHold", "general", false, "true=show overlay while key held, false=toggle on each press");
+        keybind     = config.getInt("keybind", "general", 41, -1, Integer.MAX_VALUE, "Overlay toggle key code (LWJGL). Use /ov keybind <KEY> to set by name.");
+
+        hypixelKey = config.getString("hypixelKey", "api", "", "Your Hypixel API key (use /api new in Hypixel to get one)");
+        urchinKey  = config.getString("urchinKey",  "api", "", "Your Urchin API key (https://urchin.ws)");
+
+        teams                  = config.getBoolean("teams",                  "general", true,  "Show team colors in overlay");
+        teamPrefix             = config.getBoolean("teamPrefix",             "general", false, "Show team prefix letters (e.g. R, B)");
+        showYourself           = config.getBoolean("showYourself",           "general", false, "Show yourself in the overlay");
+        addTaggedToEnemy       = config.getBoolean("addTaggedToEnemy",       "general", false, "Add Urchin-tagged players to enemy list");
+        sendNickedToChat       = config.getBoolean("sendNickedToChat",       "general", true,  "Print a chat notice when a nicked player is detected");
+        sendUrchinReasonToChat = config.getBoolean("sendUrchinReasonToChat", "general", false, "Print Urchin tag reason to chat");
+        showRanks              = config.getBoolean("showRanks",              "general", false, "Show full formatted rank prefix next to name");
+
+        colEncounters = config.getBoolean("colEncounters", "columns", true, "Show Encounters column");
+        colUsername   = config.getBoolean("colUsername",   "columns", true, "Show Username column");
+        colStar       = config.getBoolean("colStar",       "columns", true, "Show Star column");
+        colFkdr       = config.getBoolean("colFkdr",       "columns", true, "Show FKDR column");
+        colWinstreaks = config.getBoolean("colWinstreaks", "columns", true, "Show Winstreaks column");
+        colUrchin     = config.getBoolean("colUrchin",     "columns", true, "Show Urchin column");
+        colSession    = config.getBoolean("colSession",    "columns", true, "Show Session column");
+
+        encountersTimeoutMins = config.getInt("encountersTimeoutMins", "general", 30, 1,  1440, "Minutes before an encounters entry expires");
+        sortByIndex           = config.getInt("sortByIndex",           "general",  2, 0,  5,    "Sort column index: 0=Encounters 1=Star 2=FKDR 3=Index 4=Winstreak 5=JoinTime");
+        sortMode              = config.getInt("sortMode",              "general",  0, 0,  1,    "Sort mode: 0=ascending (highest on top), 1=descending");
+        winstreakMode         = config.getInt("winstreakMode",         "general",  0, 0,  5,    "Winstreak type: 0=Overall 1=Solos 2=Doubles 3=Threes 4=Fours 5=4v4");
+
+        overlayX = config.getInt("overlayX", "position", 2, 0, 10000, "Overlay X position");
+        overlayY = config.getInt("overlayY", "position", 2, 0, 10000, "Overlay Y position");
+
+        bgOpacity = config.getInt("bgOpacity",  "colors", 170, 0,  255, "Background opacity (0=transparent, 255=opaque)");
+        bgHue     = config.getInt("bgHue",      "colors",   0, 0,  360, "Background hue (0=black, 360=chroma rainbow)");
+        headerHue = config.getInt("headerHue",  "colors", 290, 0,  360, "Column header hue");
+        borderHue = config.getInt("borderHue",  "colors", 360, 0,  360, "Border hue");
+    }
+
+    public void save() {
+        if (config == null) return;
+        config.get("api",      "hypixelKey",             "").set(hypixelKey);
+        config.get("api",      "urchinKey",              "").set(urchinKey);
+        config.get("general",  "keybindHold",             false).set(keybindHold);
+        config.get("general",  "teams",                  true).set(teams);
+        config.get("general",  "teamPrefix",             false).set(teamPrefix);
+        config.get("general",  "showYourself",           false).set(showYourself);
+        config.get("general",  "addTaggedToEnemy",       false).set(addTaggedToEnemy);
+        config.get("general",  "sendNickedToChat",       true).set(sendNickedToChat);
+        config.get("general",  "sendUrchinReasonToChat", false).set(sendUrchinReasonToChat);
+        config.get("general",  "showRanks",              false).set(showRanks);
+        config.get("columns",  "colEncounters",          true).set(colEncounters);
+        config.get("columns",  "colUsername",            true).set(colUsername);
+        config.get("columns",  "colStar",                true).set(colStar);
+        config.get("columns",  "colFkdr",                true).set(colFkdr);
+        config.get("columns",  "colWinstreaks",          true).set(colWinstreaks);
+        config.get("columns",  "colUrchin",              true).set(colUrchin);
+        config.get("columns",  "colSession",             true).set(colSession);
+        config.get("general",  "encountersTimeoutMins",  30).set(encountersTimeoutMins);
+        config.get("general",  "sortByIndex",            2).set(sortByIndex);
+        config.get("general",  "sortMode",               0).set(sortMode);
+        config.get("general",  "winstreakMode",          0).set(winstreakMode);
+        config.get("position", "overlayX",               2).set(overlayX);
+        config.get("position", "overlayY",               2).set(overlayY);
+        config.get("colors",   "bgOpacity",              170).set(bgOpacity);
+        config.get("colors",   "bgHue",                  0).set(bgHue);
+        config.get("colors",   "headerHue",              290).set(headerHue);
+        config.get("colors",   "borderHue",              360).set(borderHue);
+        config.get("general",  "keybind",                41).set(keybind);
+        config.save();
+    }
+
+    // ── Getters ────────────────────────────────────────────────────────────────
+    public boolean isKeybindHold()             { return keybindHold; }
+    public int     getKeybind()                { return keybind; }
+    public String  getHypixelKey()             { return hypixelKey; }
+    public String  getUrchinKey()              { return urchinKey; }
+    public boolean isTeams()                   { return teams; }
+    public boolean isTeamPrefix()              { return teamPrefix; }
+    public boolean isShowYourself()            { return showYourself; }
+    public boolean isAddTaggedToEnemy()        { return addTaggedToEnemy; }
+    public boolean isSendNickedToChat()        { return sendNickedToChat; }
+    public boolean isSendUrchinReasonToChat()  { return sendUrchinReasonToChat; }
+    public boolean isShowRanks()               { return showRanks; }
+    public boolean isColEncounters()           { return colEncounters; }
+    public boolean isColUsername()             { return colUsername; }
+    public boolean isColStar()                 { return colStar; }
+    public boolean isColFkdr()                 { return colFkdr; }
+    public boolean isColWinstreaks()           { return colWinstreaks; }
+    public boolean isColUrchin()               { return colUrchin; }
+    public boolean isColSession()              { return colSession; }
+    public int     getEncountersTimeoutMins()  { return encountersTimeoutMins; }
+    public int     getSortByIndex()            { return sortByIndex; }
+    public int     getSortMode()               { return sortMode; }
+    public int     getWinstreakMode()          { return winstreakMode; }
+    public int     getOverlayX()               { return overlayX; }
+    public int     getOverlayY()               { return overlayY; }
+    public int     getBgOpacity()              { return bgOpacity; }
+    public int     getBgHue()                  { return bgHue; }
+    public int     getHeaderHue()              { return headerHue; }
+    public int     getBorderHue()              { return borderHue; }
+
+    // ── Setters ────────────────────────────────────────────────────────────────
+    public void setKeybindHold(boolean v)          { keybindHold = v; }
+    public void setKeybind(int v)                  { keybind = v; }
+    public void setHypixelKey(String v)            { hypixelKey = v; }
+    public void setUrchinKey(String v)             { urchinKey = v; }
+    public void setTeams(boolean v)                { teams = v; }
+    public void setTeamPrefix(boolean v)           { teamPrefix = v; }
+    public void setShowYourself(boolean v)         { showYourself = v; }
+    public void setAddTaggedToEnemy(boolean v)     { addTaggedToEnemy = v; }
+    public void setSendNickedToChat(boolean v)     { sendNickedToChat = v; }
+    public void setSendUrchinReasonToChat(boolean v) { sendUrchinReasonToChat = v; }
+    public void setShowRanks(boolean v)            { showRanks = v; }
+    public void setColEncounters(boolean v)        { colEncounters = v; }
+    public void setColUsername(boolean v)          { colUsername = v; }
+    public void setColStar(boolean v)              { colStar = v; }
+    public void setColFkdr(boolean v)              { colFkdr = v; }
+    public void setColWinstreaks(boolean v)        { colWinstreaks = v; }
+    public void setColUrchin(boolean v)            { colUrchin = v; }
+    public void setColSession(boolean v)           { colSession = v; }
+    public void setEncountersTimeoutMins(int v)    { encountersTimeoutMins = v; }
+    public void setSortByIndex(int v)              { sortByIndex = v; }
+    public void setSortMode(int v)                 { sortMode = v; }
+    public void setWinstreakMode(int v)            { winstreakMode = v; }
+    public void setOverlayX(int v)                 { overlayX = v; }
+    public void setOverlayY(int v)                 { overlayY = v; }
+    public void setBgOpacity(int v)                { bgOpacity = v; }
+    public void setBgHue(int v)                    { bgHue = v; }
+    public void setHeaderHue(int v)                { headerHue = v; }
+    public void setBorderHue(int v)                { borderHue = v; }
+}

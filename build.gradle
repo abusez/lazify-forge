@@ -1,0 +1,41 @@
+buildscript {
+    repositories {
+        jcenter()
+        maven { url = "https://maven.minecraftforge.net" }
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:2.1-SNAPSHOT'
+    }
+}
+apply plugin: 'net.minecraftforge.gradle.forge'
+apply plugin: 'java'
+
+version = "3.0"
+group = "com.lazify"
+archivesBaseName = "Lazify"
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+compileJava.options.encoding = 'UTF-8'
+
+minecraft {
+    version = "1.8.9-11.15.1.2318-1.8.9"
+    runDir = "run"
+    mappings = "stable_22"
+}
+
+dependencies {
+    // Gson is bundled with Minecraft/Forge
+}
+
+processResources {
+    inputs.property "version", project.version
+    from(sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+        expand 'version': project.version
+    }
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+}
