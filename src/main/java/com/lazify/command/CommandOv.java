@@ -5,6 +5,7 @@ import net.minecraft.command.CommandBase;
 import net.minecraft.command.ICommandSender;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class CommandOv extends CommandBase {
@@ -16,6 +17,7 @@ public class CommandOv extends CommandBase {
     @Override public String getCommandName()  { return "ov"; }
     @Override public String getCommandUsage(ICommandSender s) { return "/ov [setting] [value]"; }
     @Override public int    getRequiredPermissionLevel() { return 0; }
+    @Override public List<String> getCommandAliases() { return Arrays.asList("overlay", "lazify"); }
 
     @Override
     public void processCommand(ICommandSender sender, String[] args) {

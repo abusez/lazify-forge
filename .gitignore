@@ -3,6 +3,7 @@
 build/
 out/
 
+.claude/
 # Eclipse
 .classpath
 .project

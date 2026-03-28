@@ -19,6 +19,8 @@ import org.lwjgl.input.Keyboard;
 import java.io.File;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class OverlayManager {
 
@@ -80,6 +82,7 @@ public class OverlayManager {
     int     overlayTicks = 5;
     boolean dowho        = true;
     boolean didwho       = false;
+    boolean inBwPregame  = false;
 
     // ── Overlay layout ─────────────────────────────────────────────────────────
     int   startX = 500, startY = 12, offsetY = 3;
@@ -88,6 +91,9 @@ public class OverlayManager {
     int   background, borderColorRGB, columnTitles;
 
     static final String PREFIX = "\u00a77[\u00a7dL\u00a77]\u00a7r ";
+
+    private static final Pattern CHAT_SENDER  = Pattern.compile("^(?:\\[[\\w+]+\\] )?(\\w+) ?: .+");
+    private static final Pattern LOBBY_JOIN   = Pattern.compile("^(\\w+) has joined \\(\\d+/\\d+\\)!$");
 
     private final Queue<String> pendingMessages = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private final Queue<String> pendingCommands = new java.util.concurrent.ConcurrentLinkedQueue<>();
@@ -648,6 +654,15 @@ public class OverlayManager {
     public boolean onChat(String message) {
         String msg = ColorUtil.strip(message);
 
+        // Add players who join the pre-game lobby (no status check — pattern is specific enough)
+        {
+            Matcher joinMatcher = LOBBY_JOIN.matcher(msg);
+            if (joinMatcher.matches()) {
+                inBwPregame = true;
+                addChatPlayer(joinMatcher.group(1), currentLobby);
+            }
+        }
+
         // Auto-trigger /who when someone joins (only needed for join-time sorting)
         if (sortBy.equals(JOIN_VALUE) && dowho
                 && ((msg.endsWith("!") && msg.contains("has joined"))
@@ -742,7 +757,80 @@ public class OverlayManager {
             return false; // suppress ONLINE: line from chat
         }
 
+        // Auto-add players who chat during pre-game lobby
+        if (inBwPregame || status >= 1) {
+            Matcher m = CHAT_SENDER.matcher(msg);
+            if (m.matches()) {
+                addChatPlayer(m.group(1), currentLobby);
+            }
+        }
+
         return true;
+    }
+
+    private void addChatPlayer(String name, String lobby) {
+        for (Map<String, Object> op : overlayPlayers.values()) {
+            Object u = op.get(PLAYER_KEY);
+            if (u instanceof String && ColorUtil.strip((String) u).equalsIgnoreCase(name)) return;
+        }
+        if (ignoredPlayers.containsKey(name.toLowerCase())) return;
+
+        Minecraft mc = Minecraft.getMinecraft();
+        NetworkPlayerInfo npi = null;
+        if (mc.getNetHandler() != null) {
+            for (NetworkPlayerInfo info : mc.getNetHandler().getPlayerInfoMap()) {
+                if (info.getGameProfile().getName().equalsIgnoreCase(name)) { npi = info; break; }
+            }
+        }
+        if (npi != null) {
+            String uuid = npi.getGameProfile().getId().toString().replace("-", "");
+            if (isInOverlay(uuid)) return;
+            String displayName = npi.getDisplayName() != null
+                    ? npi.getDisplayName().getFormattedText() : npi.getGameProfile().getName();
+            final String fu = uuid, fn = displayName, fl = lobby;
+            addPlaceholderStats(fu, fn, true);
+            addToPlayers(fu);
+            new Thread(() -> handlePlayerStats(fu, fl)).start();
+            new Thread(() -> handleUrchinTag(fu, fl)).start();
+        } else {
+            final String playerName = name, fl = lobby;
+            new Thread(() -> {
+                // Wait for the tab list to populate before giving up on it
+                try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+                if (isInOverlay(playerName) || ignoredPlayers.containsKey(playerName.toLowerCase())) return;
+
+                // Retry tab list lookup after the delay
+                Minecraft mc2 = Minecraft.getMinecraft();
+                NetworkPlayerInfo npi2 = null;
+                if (mc2.getNetHandler() != null) {
+                    for (NetworkPlayerInfo info : mc2.getNetHandler().getPlayerInfoMap()) {
+                        if (info.getGameProfile().getName().equalsIgnoreCase(playerName)) { npi2 = info; break; }
+                    }
+                }
+                if (npi2 != null) {
+                    String uuid = npi2.getGameProfile().getId().toString().replace("-", "");
+                    if (isInOverlay(uuid) || ignoredPlayers.containsKey(playerName.toLowerCase())) return;
+                    String displayName = npi2.getDisplayName() != null
+                            ? npi2.getDisplayName().getFormattedText() : npi2.getGameProfile().getName();
+                    final String fu = uuid, fn = displayName;
+                    synchronized (currentPlayers) { addPlaceholderStats(fu, fn, true); addToPlayers(fu); }
+                    handlePlayerStats(fu, fl);
+                    handleUrchinTag(fu, fl);
+                    return;
+                }
+
+                // Not in tab list — resolve UUID via Mojang API
+                String[] conv = convertPlayer(playerName);
+                String uuid = conv[0], username = conv[1];
+                if (uuid == null || uuid.isEmpty()) { conv = convertPlayerPlayerdb(playerName); uuid = conv[0]; username = conv[1]; }
+                if (uuid == null || uuid.isEmpty()) return;
+                final String fu = uuid, fn = username.isEmpty() ? playerName : username;
+                if (isInOverlay(fu) || ignoredPlayers.containsKey(playerName.toLowerCase())) return;
+                synchronized (currentPlayers) { addPlaceholderStats(fu, fn, true); addToPlayers(fu); }
+                handlePlayerStats(fu, fl);
+                handleUrchinTag(fu, fl);
+            }).start();
+        }
     }
 
     // ==========================================================================
@@ -752,6 +840,7 @@ public class OverlayManager {
     public void onWorldChange() {
         dowho = true;
         didwho = false;
+        inBwPregame = false;
         overlayTicks = 0;
         clearMaps();
     }
