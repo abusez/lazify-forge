@@ -8,24 +8,32 @@ import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
+import org.lwjgl.input.Keyboard;
 
 public class EventHandler {
 
     private int tickCounter = 0;
+    private boolean keyWasDown = false;
 
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
 
-        // Key handling
-        if (LazifyMod.OVERLAY_KEY != null) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer == null || mc.currentScreen != null) {
+            keyWasDown = false;
+        } else {
+            int keyCode = LazifyConfig.INSTANCE.getKeybind();
+            boolean keyDown = keyCode >= 0 && Keyboard.isKeyDown(keyCode);
+
             if (LazifyConfig.INSTANCE.isKeybindHold()) {
-                OverlayManager.INSTANCE.setVisible(LazifyMod.OVERLAY_KEY.isKeyDown());
+                OverlayManager.INSTANCE.setVisible(keyDown);
             } else {
-                while (LazifyMod.OVERLAY_KEY.isPressed()) {
+                if (keyDown && !keyWasDown) {
                     OverlayManager.INSTANCE.toggleVisible();
                 }
             }
+            keyWasDown = keyDown;
         }
 
         tickCounter++;

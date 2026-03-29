@@ -20,14 +20,14 @@ There are no tests.
 
 ## Project Overview
 
-Minecraft Forge 1.8.9 client-side mod (mod ID: `lazify`). Displays a Bedwars player stats overlay using the Hypixel and Urchin APIs. Activated via keybind (default: backtick) or `/ov` command (aliases: `/overlay`, `/lazify`).
+Minecraft Forge 1.8.9 client-side mod (mod ID: `lazify`). Displays a Bedwars player stats overlay using the Prism (Flashlight) and Urchin APIs. No API key needed for stats; Urchin key optional for cheater tags. Activated via keybind (default: backtick) or `/ov` command (aliases: `/overlay`, `/lazify`).
 
 ## Architecture
 
 ### Entry Points
-- **`LazifyMod.java`** — `@Mod` class; registers keybind, initializes `OverlayManager` singleton, loads config, registers event handler and command.
+- **`LazifyMod.java`** — `@Mod` class; initializes `OverlayManager` singleton, loads config, registers event handler and command.
 - **`EventHandler.java`** — All Forge `@SubscribeEvent` handlers:
-  - `ClientTickEvent`: keybind polling, `OverlayManager.updateStatus()` (every 5 ticks), world-change detection via `EntityJoinWorldEvent`
+  - `ClientTickEvent`: direct LWJGL keybind polling (no Forge KeyBinding), `OverlayManager.onTick()` (every 5 ticks), world-change detection via `EntityJoinWorldEvent`
   - `RenderGameOverlayEvent.Post`: renders overlay at EXP_BAR layer
   - `ClientChatReceivedEvent`: forwards to `OverlayManager.onChat()`
 
@@ -43,7 +43,7 @@ The bulk of the logic lives here. Key state:
 **Player add pipeline** (for `/ov add` and auto-detection):
 1. `addPlaceholderStats(uuid, name, true)` — immediately shows `§7-` placeholders in overlay
 2. `addToPlayers(uuid)` — inserts into `currentPlayers` (nicked players sorted separately)
-3. `new Thread(() -> handlePlayerStats(uuid, lobby)).start()` — fetches Hypixel stats async
+3. `new Thread(() -> handlePlayerStats(uuid, lobby)).start()` — fetches stats from Prism API async (no key required)
 4. `new Thread(() -> handleUrchinTag(uuid, lobby)).start()` — fetches cheater tag async
 5. Both threads call `addToOverlay(uuid, data)` if `isInOverlay(uuid) && currentLobby.equals(lobby)` (prevents stale updates after lobby change)
 

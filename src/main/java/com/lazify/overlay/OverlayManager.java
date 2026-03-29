@@ -46,7 +46,6 @@ public class OverlayManager {
     static final String WINSTREAK_VALUE  = "winstreakvalue";
 
     // ── API keys (read from config) ────────────────────────────────────────────
-    private String hypixelKey() { return LazifyConfig.INSTANCE.getHypixelKey(); }
     private String urchinKey()  { return LazifyConfig.INSTANCE.getUrchinKey(); }
 
     // ── Core state (keyed by UUID without dashes) ──────────────────────────────
@@ -129,8 +128,6 @@ public class OverlayManager {
 
         defaultSettings();
         print(PREFIX + "\u00a7eWelcome to \u00a73Lazify\u00a7e! Please run \u00a73/ov\u00a7e for commands.");
-        if (hypixelKey().isEmpty())
-            print(PREFIX + "\u00a7cNo Hypixel API key set! Use \u00a73/ov key hypixel <key>\u00a7c to set one.");
         if (urchinKey().isEmpty())
             print(PREFIX + "\u00a7eNo Urchin API key set. Use \u00a73/ov key urchin <key>\u00a7e to enable cheater tags.");
     }
@@ -166,7 +163,6 @@ public class OverlayManager {
         columnTitles   = ColorUtil.getHueRGB(cfg.getHeaderHue(), 255);
         borderColorRGB = ColorUtil.getHueRGB(cfg.getBorderHue(), 255);
 
-        // per-column visibility
         for (ColumnDef col : columns) {
             switch (col.getKey()) {
                 case ENCOUNTERS_KEY: col.setEnabled(cfg.isColEncounters()); break;
@@ -555,7 +551,8 @@ public class OverlayManager {
 
     public void onRender() {
         Minecraft mc = Minecraft.getMinecraft();
-        boolean tabHeld = mc.gameSettings != null && mc.gameSettings.keyBindPlayerList.isKeyDown();
+        boolean tabHeld = LazifyConfig.INSTANCE.isShowOnTab()
+                && mc.gameSettings != null && mc.gameSettings.keyBindPlayerList.isKeyDown();
         if (!visible && !tabHeld) return;
         if (mc.thePlayer == null) return;
         if (mc.currentScreen != null && !(mc.currentScreen instanceof GuiChat)) return;
@@ -757,6 +754,16 @@ public class OverlayManager {
             return false; // suppress ONLINE: line from chat
         }
 
+        // Remove players from overlay on final kill
+        if ((inBwPregame || status >= 2) && LazifyConfig.INSTANCE.isRemoveFinalKill()) {
+            if (msg.endsWith("FINAL KILL!")) {
+                String victim = msg.split(" ")[0];
+                if (!victim.isEmpty()) {
+                    removePlayerByName(victim);
+                }
+            }
+        }
+
         // Auto-add players who chat during pre-game lobby
         if (inBwPregame || status >= 1) {
             Matcher m = CHAT_SENDER.matcher(msg);
@@ -833,6 +840,23 @@ public class OverlayManager {
         }
     }
 
+    private void removePlayerByName(String name) {
+        synchronized (currentPlayers) {
+            String targetUuid = null;
+            for (Map.Entry<String, Map<String, Object>> entry : overlayPlayers.entrySet()) {
+                Object u = entry.getValue().get(PLAYER_KEY);
+                if (u instanceof String && ColorUtil.strip((String) u).equalsIgnoreCase(name)) {
+                    targetUuid = entry.getKey();
+                    break;
+                }
+            }
+            if (targetUuid != null) {
+                overlayPlayers.remove(targetUuid);
+                currentPlayers.remove(targetUuid);
+            }
+        }
+    }
+
     // ==========================================================================
     // World change
     // ==========================================================================
@@ -862,7 +886,7 @@ public class OverlayManager {
 
         Map<String, Object> playerStats = new ConcurrentHashMap<>();
         try {
-            String url = "https://api.hypixel.net/v2/player?key=" + hypixelKey() + "&uuid=" + uuid;
+            String url = "https://flashlight.prismoverlay.com/v1/playerdata?uuid=" + uuid;
             Object[] res = HttpUtil.get(url, 3000);
             if ((int) res[1] == 200) {
                 playerStats = parseStats((JsonWrapper) res[0], uuid);
@@ -1082,8 +1106,8 @@ public class OverlayManager {
 
     // All setting names (for tab complete)
     public static final String[] ALL_SETTINGS = {
-        "teams","teamprefix","showyourself","showranks",
-        "sendnicked","sendurchinreason","addtaggedtoenemy","keybindhold","keybind",
+        "teams","teamprefix","showyourself","showranks","removefinalkill",
+        "sendnicked","sendurchinreason","keybindhold","showontab","keybind",
         "col","sortby","sortmode","winstreak","enctimeout",
         "x","y","bgopacity","bghue","headerhue","borderhue"
     };
@@ -1165,17 +1189,9 @@ public class OverlayManager {
                 return;
 
             case "key":
-                if (args.length < 3) { print(PREFIX + "\u00a7eUsage: \u00a73/ov key <hypixel|urchin> <key>"); return; }
-                String which = args[1].toLowerCase();
-                if (which.equals("hypixel")) {
-                    LazifyConfig.INSTANCE.setHypixelKey(args[2]); LazifyConfig.INSTANCE.save();
-                    print(PREFIX + "\u00a7eHypixel API key saved.");
-                } else if (which.equals("urchin")) {
-                    LazifyConfig.INSTANCE.setUrchinKey(args[2]); LazifyConfig.INSTANCE.save();
-                    print(PREFIX + "\u00a7eUrchin API key saved.");
-                } else {
-                    print(PREFIX + "\u00a7eUnknown key type: \u00a73" + args[1] + "\u00a7e. Use \u00a73hypixel\u00a7e or \u00a73urchin\u00a7e.");
-                }
+                if (args.length < 2) { print(PREFIX + "\u00a7eUsage: \u00a73/ov key <urchin key>"); return; }
+                LazifyConfig.INSTANCE.setUrchinKey(args[1]); LazifyConfig.INSTANCE.save();
+                print(PREFIX + "\u00a7eUrchin API key saved.");
                 return;
         }
 
@@ -1183,7 +1199,6 @@ public class OverlayManager {
         applySetting(cmd, args);
     }
 
-    /** Apply a setting. args[0] = name, args[1] = value (optional for booleans / col). */
     private void applySetting(String name, String[] args) {
         LazifyConfig cfg = LazifyConfig.INSTANCE;
         try {
@@ -1197,16 +1212,18 @@ public class OverlayManager {
                     cfg.setShowYourself(args.length > 1 ? parseBool(args[1]) : !cfg.isShowYourself()); break;
                 case "showranks":
                     cfg.setShowRanks(args.length > 1 ? parseBool(args[1]) : !cfg.isShowRanks()); break;
+                case "removefinalkill":
+                    cfg.setRemoveFinalKill(args.length > 1 ? parseBool(args[1]) : !cfg.isRemoveFinalKill()); break;
                 case "sendnicked":
                     cfg.setSendNickedToChat(args.length > 1 ? parseBool(args[1]) : !cfg.isSendNickedToChat()); break;
                 case "sendurchinreason":
                     cfg.setSendUrchinReasonToChat(args.length > 1 ? parseBool(args[1]) : !cfg.isSendUrchinReasonToChat()); break;
-                case "addtaggedtoenemy":
-                    cfg.setAddTaggedToEnemy(args.length > 1 ? parseBool(args[1]) : !cfg.isAddTaggedToEnemy()); break;
                 case "keybindhold":
                     cfg.setKeybindHold(args.length > 1 ? parseBool(args[1]) : !cfg.isKeybindHold()); break;
+                case "showontab":
+                    cfg.setShowOnTab(args.length > 1 ? parseBool(args[1]) : !cfg.isShowOnTab()); break;
 
-                // ── Integers (show hint when no value given) ───────────────────
+                // ── Integers (show current value when no arg given) ───────────
                 case "sortby":
                     if (args.length < 2) { printSortByHelp(); return; }
                     cfg.setSortByIndex(clamp(Integer.parseInt(args[1]), 0, 5)); break;
@@ -1238,11 +1255,11 @@ public class OverlayManager {
                     if (args.length < 2) { print(PREFIX + "\u00a7eborderhue: \u00a73" + cfg.getBorderHue() + " \u00a7e(0-360)"); return; }
                     cfg.setBorderHue(clamp(Integer.parseInt(args[1]), 0, 360)); break;
 
-                // ── Column visibility ──────────────────────────────────────────
+                // ── Special: keybind ──────────────────────────────────────────
                 case "keybind": {
                     if (args.length < 2) {
                         int cur = cfg.getKeybind();
-                        print(PREFIX + "\u00a7ekeybind: \u00a73" + cur + " \u00a7e(" + Keyboard.getKeyName(cur) + "). Use /ov keybind <KEY_NAME or code>"); return;
+                        print(PREFIX + "\u00a7ekeybind: \u00a73" + Keyboard.getKeyName(cur) + " \u00a7e(" + cur + ")"); return;
                     }
                     int code;
                     try {
@@ -1254,10 +1271,10 @@ public class OverlayManager {
                         print(PREFIX + "\u00a7cUnknown key: \u00a73" + args[1]); return;
                     }
                     cfg.setKeybind(code); cfg.save();
-                    LazifyMod.setKeyCode(LazifyMod.OVERLAY_KEY, code);
                     print(PREFIX + "\u00a7ekeybind \u00a72\u2192\u00a7e " + Keyboard.getKeyName(code) + " (" + code + ")"); return;
                 }
 
+                // ── Column visibility ──────────────────────────────────────────
                 case "col":
                     if (args.length < 2) { printColStatus(); return; }
                     String colName = args[1].toLowerCase();
@@ -1288,7 +1305,7 @@ public class OverlayManager {
                     return;
 
                 default:
-                    print(PREFIX + "\u00a7eUnknown setting: \u00a73" + name + "\u00a7e. Run \u00a73/ov\u00a7e for all settings.");
+                    print(PREFIX + "\u00a7eUnknown setting: \u00a73" + name + "\u00a7e. Run \u00a73/ov\u00a7e for help.");
                     return;
             }
             cfg.save();
@@ -1308,25 +1325,25 @@ public class OverlayManager {
         print(PREFIX + "\u00a77clearhidden\u00a77 \u00a7e\u2013 show all hidden players again");
         print(PREFIX + "\u00a77reload\u00a77 \u00a7e\u2013 re-fetch stats for everyone");
         print(PREFIX + "\u00a77clear\u00a77 \u00a7e\u2013 remove all players from overlay");
-        print(PREFIX + "\u00a77key \u00a7e<hypixel|urchin> <key>\u00a77 \u00a7e\u2013 set API key");
+        print(PREFIX + "\u00a77key \u00a7e<urchin key>\u00a77 \u00a7e\u2013 set Urchin API key");
     }
 
     private void printStatus() {
         LazifyConfig c = LazifyConfig.INSTANCE;
         print(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dLazify settings \u00a77\u2500\u2500\u2500  \u00a77/ov <setting> [value]  |  /ov for commands");
         print(PREFIX
-            + "\u00a77keybind \u00a7e" + c.getKeybind() + "\u00a77(" + Keyboard.getKeyName(c.getKeybind()) + ")  "
-            + "\u00a77keybindhold \u00a7" + (c.isKeybindHold() ? "a" : "c") + c.isKeybindHold());
+            + "\u00a77keybind \u00a7e" + Keyboard.getKeyName(c.getKeybind()) + "  "
+            + "\u00a77keybindhold \u00a7" + (c.isKeybindHold() ? "a" : "c") + c.isKeybindHold() + "  "
+            + "\u00a77showontab \u00a7" + (c.isShowOnTab() ? "a" : "c") + c.isShowOnTab());
         print(PREFIX
             + "\u00a77teams \u00a7" + (c.isTeams() ? "a" : "c") + c.isTeams() + "  "
             + "\u00a77teamprefix \u00a7" + (c.isTeamPrefix() ? "a" : "c") + c.isTeamPrefix() + "  "
             + "\u00a77showyourself \u00a7" + (c.isShowYourself() ? "a" : "c") + c.isShowYourself() + "  "
-            + "\u00a77showranks \u00a7" + (c.isShowRanks() ? "a" : "c") + c.isShowRanks());
+            + "\u00a77showranks \u00a7" + (c.isShowRanks() ? "a" : "c") + c.isShowRanks() + "  "
+            + "\u00a77removefinalkill \u00a7" + (c.isRemoveFinalKill() ? "a" : "c") + c.isRemoveFinalKill());
         print(PREFIX
             + "\u00a77sendnicked \u00a7" + (c.isSendNickedToChat() ? "a" : "c") + c.isSendNickedToChat() + "  "
-            + "\u00a77sendurchinreason \u00a7" + (c.isSendUrchinReasonToChat() ? "a" : "c") + c.isSendUrchinReasonToChat() + "  "
-            + "\u00a77addtaggedtoenemy \u00a7" + (c.isAddTaggedToEnemy() ? "a" : "c") + c.isAddTaggedToEnemy() + "  "
-            + "\u00a77keybindhold \u00a7" + (c.isKeybindHold() ? "a" : "c") + c.isKeybindHold());
+            + "\u00a77sendurchinreason \u00a7" + (c.isSendUrchinReasonToChat() ? "a" : "c") + c.isSendUrchinReasonToChat());
         print(PREFIX
             + "\u00a77sortby \u00a7e" + c.getSortByIndex() + "\u00a77(" + sortByName(c.getSortByIndex()) + ")  "
             + "\u00a77sortmode \u00a7e" + c.getSortMode() + "\u00a77(" + (c.getSortMode() == 0 ? "asc" : "desc") + ")  "
@@ -1348,7 +1365,6 @@ public class OverlayManager {
             + "\u00a77urchin \u00a7" + (c.isColUrchin() ? "a" : "c") + c.isColUrchin() + "  "
             + "\u00a77session \u00a7" + (c.isColSession() ? "a" : "c") + c.isColSession());
         print(PREFIX
-            + "\u00a77hypixel key: " + (c.getHypixelKey().isEmpty() ? "\u00a7cnot set" : "\u00a7aset") + "  "
             + "\u00a77urchin key: "  + (c.getUrchinKey().isEmpty()  ? "\u00a7cnot set" : "\u00a7aset") + "  "
             + "\u00a77overlay: " + (visible ? "\u00a7avisible" : "\u00a7chidden"));
     }
@@ -1406,11 +1422,12 @@ public class OverlayManager {
             case "teamprefix":       return boolStr(c.isTeamPrefix());
             case "showyourself":     return boolStr(c.isShowYourself());
             case "showranks":        return boolStr(c.isShowRanks());
+            case "removefinalkill":  return boolStr(c.isRemoveFinalKill());
             case "sendnicked":       return boolStr(c.isSendNickedToChat());
             case "sendurchinreason": return boolStr(c.isSendUrchinReasonToChat());
-            case "addtaggedtoenemy": return boolStr(c.isAddTaggedToEnemy());
             case "keybindhold":      return boolStr(c.isKeybindHold());
-            case "keybind":          return "\u00a7e" + c.getKeybind() + "\u00a7e (" + Keyboard.getKeyName(c.getKeybind()) + ")";
+            case "showontab":        return boolStr(c.isShowOnTab());
+            case "keybind":          return "\u00a7e" + Keyboard.getKeyName(c.getKeybind()) + " (" + c.getKeybind() + ")";
             case "sortby":     return "\u00a7e" + c.getSortByIndex() + "\u00a7e (" + sortByName(c.getSortByIndex()) + ")";
             case "sortmode":   return "\u00a7e" + c.getSortMode() + "\u00a7e (" + (c.getSortMode() == 0 ? "asc" : "desc") + ")";
             case "winstreak":  return "\u00a7e" + c.getWinstreakMode() + "\u00a7e (" + winstreakName(c.getWinstreakMode()) + ")";
