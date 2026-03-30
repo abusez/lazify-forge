@@ -48,6 +48,16 @@ public class OverlayManager {
     // ── API keys (read from config) ────────────────────────────────────────────
     private String urchinKey()  { return LazifyConfig.INSTANCE.getUrchinKey(); }
 
+    // ── Prism API headers ─────────────────────────────────────────────────────
+    private static final String PRISM_USER_ID = UUID.randomUUID().toString().replace("-", "");
+    private static final Map<String, String> PRISM_HEADERS;
+    static {
+        Map<String, String> h = new HashMap<>();
+        h.put("X-User-Id", PRISM_USER_ID);
+        h.put("X-Prism-Version", "v1.11.0");
+        PRISM_HEADERS = h;
+    }
+
     // ── Core state (keyed by UUID without dashes) ──────────────────────────────
     Map<String, Map<String, Object>> overlayPlayers = new ConcurrentHashMap<>();
     Map<String, String>              ignoredPlayers  = new HashMap<>();
@@ -130,6 +140,8 @@ public class OverlayManager {
         print(PREFIX + "\u00a7eWelcome to \u00a73Lazify\u00a7e! Please run \u00a73/ov\u00a7e for commands.");
         if (urchinKey().isEmpty())
             print(PREFIX + "\u00a7eNo Urchin API key set. Use \u00a73/ov key urchin <key>\u00a7e to enable cheater tags.");
+        if (!LazifyConfig.INSTANCE.isUsePrism() && LazifyConfig.INSTANCE.getHypixelKey().isEmpty())
+            print(PREFIX + "\u00a7cHypixel API selected but no key set. Use \u00a73/ov key hypixel <key>\u00a7c or \u00a73/ov useprism\u00a7c to switch.");
     }
 
     private void addColumn(String display, String header, String key) {
@@ -251,6 +263,7 @@ public class OverlayManager {
 
             // Nick detection: UUID without dashes char[12] != '4' → nicked
             if (uuid.charAt(12) != '4') {
+                debug("Nick detected: " + username + " uuid=" + uuid);
                 placeholder.put("nicked", true);
                 placeholder.put(PLAYER_KEY, username);
                 overlayPlayers.put(uuid, placeholder);
@@ -262,6 +275,7 @@ public class OverlayManager {
                 continue;
             }
 
+            debug("Adding player from tab: " + username + " uuid=" + uuid);
             overlayPlayers.put(uuid, placeholder);
             addPlaceholderStats(uuid, displayName, false);
             addToPlayers(uuid);
@@ -309,8 +323,13 @@ public class OverlayManager {
 
     private void updateStatus() {
         lastLobby = currentLobby;
+        int oldStatus = status;
         status = getBedwarsStatus();
+        if (status != oldStatus) {
+            debug("Status changed: " + oldStatus + " -> " + status + " | lobby=" + currentLobby + " inBwPregame=" + inBwPregame);
+        }
         if (!lastLobby.equals(currentLobby)) {
+            debug("Lobby changed: " + lastLobby + " -> " + currentLobby);
             clearMaps();
         }
     }
@@ -656,6 +675,7 @@ public class OverlayManager {
             Matcher joinMatcher = LOBBY_JOIN.matcher(msg);
             if (joinMatcher.matches()) {
                 inBwPregame = true;
+                debug("Lobby join detected: " + joinMatcher.group(1) + " | lobby=" + currentLobby + " status=" + status);
                 addChatPlayer(joinMatcher.group(1), currentLobby);
             }
         }
@@ -759,6 +779,7 @@ public class OverlayManager {
             if (msg.endsWith("FINAL KILL!")) {
                 String victim = msg.split(" ")[0];
                 if (!victim.isEmpty()) {
+                    debug("Final kill detected: victim=" + victim + " | inBwPregame=" + inBwPregame + " status=" + status);
                     removePlayerByName(victim);
                 }
             }
@@ -768,6 +789,7 @@ public class OverlayManager {
         if (inBwPregame || status >= 1) {
             Matcher m = CHAT_SENDER.matcher(msg);
             if (m.matches()) {
+                debug("Chat sender detected: " + m.group(1) + " | inBwPregame=" + inBwPregame + " status=" + status);
                 addChatPlayer(m.group(1), currentLobby);
             }
         }
@@ -778,9 +800,15 @@ public class OverlayManager {
     private void addChatPlayer(String name, String lobby) {
         for (Map<String, Object> op : overlayPlayers.values()) {
             Object u = op.get(PLAYER_KEY);
-            if (u instanceof String && ColorUtil.strip((String) u).equalsIgnoreCase(name)) return;
+            if (u instanceof String && ColorUtil.strip((String) u).equalsIgnoreCase(name)) {
+                debug("addChatPlayer: " + name + " already in overlay, skipping");
+                return;
+            }
         }
-        if (ignoredPlayers.containsKey(name.toLowerCase())) return;
+        if (ignoredPlayers.containsKey(name.toLowerCase())) {
+            debug("addChatPlayer: " + name + " is ignored, skipping");
+            return;
+        }
 
         Minecraft mc = Minecraft.getMinecraft();
         NetworkPlayerInfo npi = null;
@@ -794,12 +822,14 @@ public class OverlayManager {
             if (isInOverlay(uuid)) return;
             String displayName = npi.getDisplayName() != null
                     ? npi.getDisplayName().getFormattedText() : npi.getGameProfile().getName();
+            debug("addChatPlayer: " + name + " found in tab list, uuid=" + uuid);
             final String fu = uuid, fn = displayName, fl = lobby;
             addPlaceholderStats(fu, fn, true);
             addToPlayers(fu);
             new Thread(() -> handlePlayerStats(fu, fl)).start();
             new Thread(() -> handleUrchinTag(fu, fl)).start();
         } else {
+            debug("addChatPlayer: " + name + " not in tab list, resolving UUID async...");
             final String playerName = name, fl = lobby;
             new Thread(() -> {
                 // Wait for the tab list to populate before giving up on it
@@ -851,8 +881,11 @@ public class OverlayManager {
                 }
             }
             if (targetUuid != null) {
+                debug("Removing final-killed player: " + name + " uuid=" + targetUuid);
                 overlayPlayers.remove(targetUuid);
                 currentPlayers.remove(targetUuid);
+            } else {
+                debug("Final kill: player " + name + " not found in overlay");
             }
         }
     }
@@ -862,6 +895,7 @@ public class OverlayManager {
     // ==========================================================================
 
     public void onWorldChange() {
+        debug("World change: clearing overlay, resetting state | was lobby=" + currentLobby + " status=" + status);
         dowho = true;
         didwho = false;
         inBwPregame = false;
@@ -878,23 +912,44 @@ public class OverlayManager {
         if (cached != null) {
             long cacheTime = cached.containsKey("cachetime") ? (long)(Object)cached.get("cachetime") : 0L;
             if (System.currentTimeMillis() < cacheTime) {
+                debugFromThread("Stats cache hit for " + uuid);
                 if (isInOverlay(uuid) && currentLobby.equals(lobby)) addToOverlay(uuid, cached);
                 return;
             }
+            debugFromThread("Stats cache expired for " + uuid);
             statsCache.remove(uuid);
         }
 
         Map<String, Object> playerStats = new ConcurrentHashMap<>();
         try {
-            String url = "https://flashlight.prismoverlay.com/v1/playerdata?uuid=" + uuid;
-            Object[] res = HttpUtil.get(url, 3000);
-            if ((int) res[1] == 200) {
+            String url;
+            Map<String, String> headers = null;
+            if (LazifyConfig.INSTANCE.isUsePrism()) {
+                url = "https://flashlight.prismoverlay.com/v1/playerdata?uuid=" + uuid;
+                headers = PRISM_HEADERS;
+                debugFromThread("Fetching stats from Prism API for " + uuid);
+            } else {
+                String key = LazifyConfig.INSTANCE.getHypixelKey();
+                if (key.isEmpty()) {
+                    printFromThread(PREFIX + "\u00a7cNo Hypixel API key set. Use \u00a73/ov key hypixel <key>\u00a7c or switch to Prism with \u00a73/ov useprism");
+                    playerStats.put("error", true);
+                    if (isInOverlay(uuid) && currentLobby.equals(lobby)) addToOverlay(uuid, playerStats);
+                    return;
+                }
+                url = "https://api.hypixel.net/v2/player?key=" + key + "&uuid=" + uuid;
+                debugFromThread("Fetching stats from Hypixel API for " + uuid);
+            }
+            Object[] res = HttpUtil.get(url, 3000, headers);
+            int code = (int) res[1];
+            debugFromThread("Stats API response: HTTP " + code + " for " + uuid);
+            if (code == 200) {
                 playerStats = parseStats((JsonWrapper) res[0], uuid);
             } else {
-                printFromThread(PREFIX + "\u00a7eHTTP Error \u00a73" + res[1] + " \u00a7ewhile getting stats.");
+                printFromThread(PREFIX + "\u00a7eHTTP Error \u00a73" + code + " \u00a7ewhile getting stats.");
                 playerStats.put("error", true);
             }
         } catch (Exception e) {
+            debugFromThread("Stats API exception for " + uuid + ": " + e.getMessage());
             printFromThread(PREFIX + "\u00a7eRuntime error while getting stats.");
             playerStats.put("error", true);
         }
@@ -1025,12 +1080,20 @@ public class OverlayManager {
     // ==========================================================================
 
     private void handleUrchinTag(String uuid, String lobby) {
-        if (urchinCache.containsKey(uuid)) return;
-        if (urchinKey() == null || urchinKey().isEmpty()) return;
+        if (urchinCache.containsKey(uuid)) {
+            debugFromThread("Urchin cache hit for " + uuid);
+            return;
+        }
+        if (urchinKey() == null || urchinKey().isEmpty()) {
+            debugFromThread("Urchin skipped for " + uuid + " (no key set)");
+            return;
+        }
 
         try {
             String url = "https://urchin.ws/player/" + uuid + "?key=" + urchinKey() + "&sources=GAME";
+            debugFromThread("Fetching Urchin tag for " + uuid);
             Object[] res = HttpUtil.get(url, 3000);
+            debugFromThread("Urchin API response: HTTP " + (int) res[1] + " for " + uuid);
 
             if ((int) res[1] == 200) {
                 JsonWrapper json = (JsonWrapper) res[0];
@@ -1042,6 +1105,7 @@ public class OverlayManager {
                     String reason  = firstTag.object().get("reason", "");
 
                     if (!tagType.isEmpty()) {
+                        debugFromThread("Urchin tag found for " + uuid + ": type=" + tagType + " reason=" + reason);
                         Map<String, Object> op = overlayPlayers.get(uuid);
                         String username = op != null ? (String) op.getOrDefault("username", uuid) : uuid;
 
@@ -1074,8 +1138,10 @@ public class OverlayManager {
         String url = isUUID
                 ? "https://sessionserver.mojang.com/session/minecraft/profile/" + player
                 : "https://api.mojang.com/users/profiles/minecraft/" + player;
+        debugFromThread("Mojang API lookup: " + player + " -> " + url);
         try {
             Object[] res = HttpUtil.get(url, 3000);
+            debugFromThread("Mojang API response: HTTP " + (int) res[1] + " for " + player);
             if ((int) res[1] == 200) {
                 JsonWrapper j = (JsonWrapper) res[0];
                 return new String[]{ j.get("id", ""), j.get("name", "") };
@@ -1088,8 +1154,10 @@ public class OverlayManager {
 
     private String[] convertPlayerPlayerdb(String player) {
         String url = "https://playerdb.co/api/player/minecraft/" + player;
+        debugFromThread("PlayerDB API lookup: " + player);
         try {
             Object[] res = HttpUtil.get(url, 3000);
+            debugFromThread("PlayerDB API response: HTTP " + (int) res[1] + " for " + player);
             if ((int) res[1] == 200) {
                 JsonWrapper thing = ((JsonWrapper) res[0]).object().object("data").object("player");
                 return new String[]{ thing.get("raw_id", ""), thing.get("username", "") };
@@ -1108,7 +1176,7 @@ public class OverlayManager {
     public static final String[] ALL_SETTINGS = {
         "teams","teamprefix","showyourself","showranks","removefinalkill",
         "sendnicked","sendurchinreason","keybindhold","showontab","keybind",
-        "col","sortby","sortmode","winstreak","enctimeout",
+        "useprism","debug","col","sortby","sortmode","winstreak","enctimeout",
         "x","y","bgopacity","bghue","headerhue","borderhue"
     };
     public static final String[] ALL_COLUMNS = {
@@ -1189,9 +1257,17 @@ public class OverlayManager {
                 return;
 
             case "key":
-                if (args.length < 2) { print(PREFIX + "\u00a7eUsage: \u00a73/ov key <urchin key>"); return; }
-                LazifyConfig.INSTANCE.setUrchinKey(args[1]); LazifyConfig.INSTANCE.save();
-                print(PREFIX + "\u00a7eUrchin API key saved.");
+                if (args.length < 3) { print(PREFIX + "\u00a7eUsage: \u00a73/ov key <hypixel|urchin> <key>"); return; }
+                String keyType = args[1].toLowerCase();
+                if (keyType.equals("hypixel")) {
+                    LazifyConfig.INSTANCE.setHypixelKey(args[2]); LazifyConfig.INSTANCE.save();
+                    print(PREFIX + "\u00a7eHypixel API key saved.");
+                } else if (keyType.equals("urchin")) {
+                    LazifyConfig.INSTANCE.setUrchinKey(args[2]); LazifyConfig.INSTANCE.save();
+                    print(PREFIX + "\u00a7eUrchin API key saved.");
+                } else {
+                    print(PREFIX + "\u00a7eUnknown key type: \u00a73" + args[1] + "\u00a7e. Use \u00a73hypixel\u00a7e or \u00a73urchin\u00a7e.");
+                }
                 return;
         }
 
@@ -1222,6 +1298,14 @@ public class OverlayManager {
                     cfg.setKeybindHold(args.length > 1 ? parseBool(args[1]) : !cfg.isKeybindHold()); break;
                 case "showontab":
                     cfg.setShowOnTab(args.length > 1 ? parseBool(args[1]) : !cfg.isShowOnTab()); break;
+                case "useprism":
+                    cfg.setUsePrism(args.length > 1 ? parseBool(args[1]) : !cfg.isUsePrism());
+                    if (!cfg.isUsePrism() && cfg.getHypixelKey().isEmpty()) {
+                        print(PREFIX + "\u00a7cWarning: No Hypixel API key set. Use \u00a73/ov key hypixel <key>");
+                    }
+                    break;
+                case "debug":
+                    cfg.setDebug(args.length > 1 ? parseBool(args[1]) : !cfg.isDebug()); break;
 
                 // ── Integers (show current value when no arg given) ───────────
                 case "sortby":
@@ -1325,7 +1409,7 @@ public class OverlayManager {
         print(PREFIX + "\u00a77clearhidden\u00a77 \u00a7e\u2013 show all hidden players again");
         print(PREFIX + "\u00a77reload\u00a77 \u00a7e\u2013 re-fetch stats for everyone");
         print(PREFIX + "\u00a77clear\u00a77 \u00a7e\u2013 remove all players from overlay");
-        print(PREFIX + "\u00a77key \u00a7e<urchin key>\u00a77 \u00a7e\u2013 set Urchin API key");
+        print(PREFIX + "\u00a77key \u00a7e<hypixel|urchin> <key>\u00a77 \u00a7e\u2013 set API key");
     }
 
     private void printStatus() {
@@ -1343,7 +1427,8 @@ public class OverlayManager {
             + "\u00a77removefinalkill \u00a7" + (c.isRemoveFinalKill() ? "a" : "c") + c.isRemoveFinalKill());
         print(PREFIX
             + "\u00a77sendnicked \u00a7" + (c.isSendNickedToChat() ? "a" : "c") + c.isSendNickedToChat() + "  "
-            + "\u00a77sendurchinreason \u00a7" + (c.isSendUrchinReasonToChat() ? "a" : "c") + c.isSendUrchinReasonToChat());
+            + "\u00a77sendurchinreason \u00a7" + (c.isSendUrchinReasonToChat() ? "a" : "c") + c.isSendUrchinReasonToChat() + "  "
+            + "\u00a77debug \u00a7" + (c.isDebug() ? "a" : "c") + c.isDebug());
         print(PREFIX
             + "\u00a77sortby \u00a7e" + c.getSortByIndex() + "\u00a77(" + sortByName(c.getSortByIndex()) + ")  "
             + "\u00a77sortmode \u00a7e" + c.getSortMode() + "\u00a77(" + (c.getSortMode() == 0 ? "asc" : "desc") + ")  "
@@ -1365,6 +1450,8 @@ public class OverlayManager {
             + "\u00a77urchin \u00a7" + (c.isColUrchin() ? "a" : "c") + c.isColUrchin() + "  "
             + "\u00a77session \u00a7" + (c.isColSession() ? "a" : "c") + c.isColSession());
         print(PREFIX
+            + "\u00a77useprism \u00a7" + (c.isUsePrism() ? "a" : "c") + c.isUsePrism() + "\u00a77 (" + (c.isUsePrism() ? "Prism" : "Hypixel") + ")  "
+            + "\u00a77hypixel key: " + (c.getHypixelKey().isEmpty() ? "\u00a7cnot set" : "\u00a7aset") + "  "
             + "\u00a77urchin key: "  + (c.getUrchinKey().isEmpty()  ? "\u00a7cnot set" : "\u00a7aset") + "  "
             + "\u00a77overlay: " + (visible ? "\u00a7avisible" : "\u00a7chidden"));
     }
@@ -1427,6 +1514,8 @@ public class OverlayManager {
             case "sendurchinreason": return boolStr(c.isSendUrchinReasonToChat());
             case "keybindhold":      return boolStr(c.isKeybindHold());
             case "showontab":        return boolStr(c.isShowOnTab());
+            case "useprism":         return boolStr(c.isUsePrism());
+            case "debug":            return boolStr(c.isDebug());
             case "keybind":          return "\u00a7e" + Keyboard.getKeyName(c.getKeybind()) + " (" + c.getKeybind() + ")";
             case "sortby":     return "\u00a7e" + c.getSortByIndex() + "\u00a7e (" + sortByName(c.getSortByIndex()) + ")";
             case "sortmode":   return "\u00a7e" + c.getSortMode() + "\u00a7e (" + (c.getSortMode() == 0 ? "asc" : "desc") + ")";
@@ -1450,6 +1539,14 @@ public class OverlayManager {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.thePlayer == null) return;
         mc.thePlayer.addChatMessage(new ChatComponentText(ColorUtil.colorize(msg)));
+    }
+
+    private void debug(String msg) {
+        if (LazifyConfig.INSTANCE.isDebug()) print(PREFIX + "\u00a78[DEBUG] \u00a77" + msg);
+    }
+
+    private void debugFromThread(String msg) {
+        if (LazifyConfig.INSTANCE.isDebug()) printFromThread(PREFIX + "\u00a78[DEBUG] \u00a77" + msg);
     }
 
     private void printFromThread(String msg) { pendingMessages.add(msg); }

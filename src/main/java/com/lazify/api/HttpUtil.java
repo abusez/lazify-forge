@@ -6,6 +6,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Map;
 
 public class HttpUtil {
 
@@ -14,6 +15,10 @@ public class HttpUtil {
      * On error returns [JsonWrapper(null), 500].
      */
     public static Object[] get(String urlStr, int timeout) {
+        return get(urlStr, timeout, null);
+    }
+
+    public static Object[] get(String urlStr, int timeout, Map<String, String> extraHeaders) {
         HttpURLConnection conn = null;
         try {
             URL url = new URL(urlStr);
@@ -25,6 +30,11 @@ public class HttpUtil {
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
             conn.setRequestProperty("Accept", "application/json");
+            if (extraHeaders != null) {
+                for (Map.Entry<String, String> entry : extraHeaders.entrySet()) {
+                    conn.setRequestProperty(entry.getKey(), entry.getValue());
+                }
+            }
 
             int code = conn.getResponseCode();
 

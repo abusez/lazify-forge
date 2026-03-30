@@ -11,12 +11,19 @@ public class LazifyConfig {
     private Configuration config;
 
     // API keys
-    private String urchinKey = "";
+    private String urchinKey  = "";
+    private String hypixelKey = "";
+
+    // API provider
+    private boolean usePrism = true;
 
     // keybind behaviour
     private boolean keybindHold = false;
     private boolean showOnTab   = true;
     private int     keybind     = 41;    // LWJGL KEY_GRAVE (`)
+
+    // debug
+    private boolean debug = false;
 
     // boolean settings
     private boolean teams                  = true;
@@ -63,8 +70,11 @@ public class LazifyConfig {
     }
 
     private void syncFromFile() {
-        urchinKey = config.getString("urchinKey", "api", "", "Your Urchin API key (https://urchin.ws)");
+        urchinKey  = config.getString("urchinKey",  "api", "", "Your Urchin API key (https://urchin.ws)");
+        hypixelKey = config.getString("hypixelKey", "api", "", "Your Hypixel API key (/api new on Hypixel)");
+        usePrism   = config.getBoolean("usePrism",  "api", true, "true=Prism API (no key needed), false=Hypixel API (key required)");
 
+        debug       = config.getBoolean("debug",       "general", false, "Print debug messages to chat");
         keybindHold = config.getBoolean("keybindHold", "general", false, "true=show overlay while key held, false=toggle");
         showOnTab   = config.getBoolean("showOnTab",   "general", true,  "Show overlay while holding Tab");
         keybind     = config.getInt("keybind", "general", 41, -1, Integer.MAX_VALUE, "Overlay toggle key code (LWJGL)");
@@ -102,6 +112,9 @@ public class LazifyConfig {
     public void save() {
         if (config == null) return;
         config.get("api",      "urchinKey",              "").set(urchinKey);
+        config.get("api",      "hypixelKey",             "").set(hypixelKey);
+        config.get("api",      "usePrism",               true).set(usePrism);
+        config.get("general",  "debug",                  false).set(debug);
         config.get("general",  "keybindHold",            false).set(keybindHold);
         config.get("general",  "showOnTab",              true).set(showOnTab);
         config.get("general",  "keybind",                41).set(keybind);
@@ -134,6 +147,9 @@ public class LazifyConfig {
 
     // ── Getters ────────────────────────────────────────────────────────────────
     public String  getUrchinKey()              { return urchinKey; }
+    public String  getHypixelKey()             { return hypixelKey; }
+    public boolean isUsePrism()                { return usePrism; }
+    public boolean isDebug()                   { return debug; }
     public boolean isKeybindHold()             { return keybindHold; }
     public boolean isShowOnTab()              { return showOnTab; }
     public int     getKeybind()                { return keybind; }
@@ -164,6 +180,9 @@ public class LazifyConfig {
 
     // ── Setters ────────��────────────────────────────────────���──────────────────
     public void setUrchinKey(String v)             { urchinKey = v; }
+    public void setHypixelKey(String v)            { hypixelKey = v; }
+    public void setUsePrism(boolean v)             { usePrism = v; }
+    public void setDebug(boolean v)                { debug = v; }
     public void setKeybindHold(boolean v)          { keybindHold = v; }
     public void setShowOnTab(boolean v)            { showOnTab = v; }
     public void setKeybind(int v)                  { keybind = v; }

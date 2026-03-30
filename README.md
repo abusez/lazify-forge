@@ -20,6 +20,7 @@ A Minecraft Forge mod for **1.8.9** that displays a real-time HUD overlay showin
 - Minecraft 1.8.9
 - Minecraft Forge 11.15.1.2318
 - Java 8
+- Hypixel API key (optional, only if using Hypixel API instead of Prism)
 - Urchin API key (optional, for cheater tags)
 
 ## Building
@@ -40,7 +41,9 @@ The output JAR will be in `build/retromapping/retromappedReplacedMain.jar`.
 
 The config file is stored at `.minecraft/config/lazify.cfg`.
 
-Set your Urchin API key (optional): `/ov key <your-key>`
+By default, Lazify uses the Prism API for stats (no key needed). To use the Hypixel API instead, run `/ov useprism false` and set your key with `/ov key hypixel <your-key>`.
+
+Set your Urchin API key (optional): `/ov key urchin <your-key>`
 
 ## Commands
 
@@ -48,7 +51,7 @@ All commands use the `/ov` prefix (aliases: `/overlay`, `/lazify`).
 
 | Command | Description |
 |---|---|
-| `/ov key <key>` | Set your Urchin API key |
+| `/ov key <hypixel\|urchin> <key>` | Set an API key |
 | `/ov sc` | Sneak-click toggle |
 | `/ov hide <player>` | Hide a player from the overlay |
 | `/ov clearhidden` | Clear the hidden players list |
@@ -56,7 +59,7 @@ All commands use the `/ov` prefix (aliases: `/overlay`, `/lazify`).
 | `/ov sortby <0-5>` | Sort by column (0=Encounters, 1=Star, 2=FKDR, 3=Index, 4=Winstreak, 5=JoinTime) |
 | `/ov sortmode <0/1>` | 0=ascending (highest on top), 1=descending |
 | `/ov winstreak <0-5>` | Winstreak mode (0=Overall, 1=Solos, 2=Doubles, 3=Threes, 4=Fours, 5=4v4) |
-| `/ov set <setting> <value>` | Change a boolean setting (teams, teamprefix, showyourself, sendnickedtochat, sendurchinreasontochat, showranks, removefinalkill, showontab, keybindhold) |
+| `/ov set <setting> <value>` | Change a boolean setting (teams, teamprefix, showyourself, sendnicked, sendurchinreason, showranks, removefinalkill, showontab, keybindhold, useprism, debug) |
 | `/ov color <bg/header/border> <0-360>` | Set hue for overlay colors |
 | `/ov opacity <0-255>` | Set background opacity |
 | `/ov reload` | Reload config from disk |
