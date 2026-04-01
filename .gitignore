@@ -6,6 +6,7 @@ out/
 .claude/
 CLAUDE.md
 changelog.md
+AGENTS.md
 
 # Eclipse
 .classpath

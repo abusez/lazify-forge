@@ -44,6 +44,7 @@ public class OverlayManager {
     static final String INDEX_VALUE      = "indexvalue";
     static final String SESSION_VALUE    = "sessionvalue";
     static final String WINSTREAK_VALUE  = "winstreakvalue";
+    static final String PREGAME_KEEP_KEY = "pregamekeep";
 
     // ── API keys (read from config) ────────────────────────────────────────────
     private String urchinKey()  { return LazifyConfig.INSTANCE.getUrchinKey(); }
@@ -79,6 +80,12 @@ public class OverlayManager {
     public void toggleVisible()       { visible = !visible; }
     public void setVisible(boolean v) { visible = v; }
 
+    // ── Debug ──────────────────────────────────────────────────────────────────
+    boolean debugScoreboard = false;
+    private int debugSbCooldown = 0;
+    boolean debugTablist = false;
+    private int debugTabCooldown = 0;
+
     // ── Game state ─────────────────────────────────────────────────────────────
     String  currentLobby = "";
     String  lastLobby    = "";
@@ -103,6 +110,7 @@ public class OverlayManager {
 
     private static final Pattern CHAT_SENDER  = Pattern.compile("^(?:\\[[\\w+]+\\] )?(\\w+) ?: .+");
     private static final Pattern LOBBY_JOIN   = Pattern.compile("^(\\w+) has joined \\(\\d+/\\d+\\)!$");
+    private static final Pattern PREGAME_LIST = Pattern.compile("^\\+ \\(\\d+/\\d+\\) (\\w+)$");
 
     private final Queue<String> pendingMessages = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private final Queue<String> pendingCommands = new java.util.concurrent.ConcurrentLinkedQueue<>();
@@ -201,6 +209,26 @@ public class OverlayManager {
         defaultSettings();
         updateStatus();
 
+        // Debug scoreboard dump (throttled to every 100 ticks / 5 seconds)
+        if (debugScoreboard && LazifyConfig.INSTANCE.isDebug()) {
+            if (debugSbCooldown <= 0) {
+                debugSbCooldown = 100;
+                dumpScoreboard();
+            } else {
+                debugSbCooldown--;
+            }
+        }
+
+        // Debug tab list dump (throttled to every 100 ticks / 5 seconds)
+        if (debugTablist && LazifyConfig.INSTANCE.isDebug()) {
+            if (debugTabCooldown <= 0) {
+                debugTabCooldown = 100;
+                dumpTablist();
+            } else {
+                debugTabCooldown--;
+            }
+        }
+
         doColumns(true);
 
         if (status < 1) return;
@@ -226,20 +254,23 @@ public class OverlayManager {
             }
 
             currentEntityUUIDs.add(uuid);
-            if (isBot(pla)) continue;
-
             if (isInOverlay(uuid)) {
-                // Assign team color once in-game if not yet set
-                if (showTeamColors && status == 3 && !teams.containsKey(uuid)
-                        && displayName.contains(" ")) {
-                    teams.put(uuid, displayName);
-                    Map<String, Object> teamData = new HashMap<>();
-                    String teamPart = showTeamPrefix ? displayName : displayName.split(" ")[1];
-                    teamData.put(PLAYER_KEY, teamPart);
-                    addToOverlay(uuid, teamData);
+                if (showTeamColors && status == 3) {
+                    String teamDisplay = getTeamDisplayFromTab(pla, displayName);
+                    if (teamDisplay != null) {
+                        String prev = teams.put(uuid, teamDisplay);
+                        if (!teamDisplay.equals(prev)) {
+                            Map<String, Object> teamData = new HashMap<>();
+                            teamData.put(PLAYER_KEY, teamDisplay);
+                            addToOverlay(uuid, teamData);
+                        }
+                    }
                 }
+                if (isBot(pla)) continue;
                 continue;
             }
+
+            if (isBot(pla)) continue;
 
             // ── Track encounters ──────────────────────────────────────────────
             // UUID v4: char[14] of UUID-with-dashes is the version digit
@@ -293,6 +324,7 @@ public class OverlayManager {
                 Map.Entry<String, Map<String, Object>> entry = it.next();
                 if (currentEntityUUIDs.contains(entry.getKey())) continue;
                 if (entry.getValue().containsKey("manual")) continue;
+                if (Boolean.TRUE.equals(entry.getValue().get(PREGAME_KEEP_KEY))) continue;
                 it.remove();
                 doColumns(false);
             }
@@ -335,9 +367,10 @@ public class OverlayManager {
     }
 
     private int getBedwarsStatus() {
+        String title = getSidebarTitle();
         List<String> sidebar = getSidebarLines();
 
-        if (sidebar == null) {
+        if (title == null || sidebar == null) {
             Minecraft mc = Minecraft.getMinecraft();
             if (mc.theWorld != null) {
                 String dim = mc.theWorld.provider.getDimensionName();
@@ -346,26 +379,47 @@ public class OverlayManager {
             return -1;
         }
 
-        if (sidebar.size() < 7) return -1;
-        if (!ColorUtil.strip(sidebar.get(0)).startsWith("BED WARS")) return -1;
+        // The objective display name is "BED WARS" — score lines do NOT contain the title
+        if (!ColorUtil.strip(title).startsWith("BED WARS")) return -1;
+        if (sidebar.isEmpty()) return -1;
 
-        // Extract lobby ID from line 1: "  LOBBYID  [N]" → split on double-space
-        String[] parts = ColorUtil.strip(sidebar.get(1)).split("  ");
-        if (parts.length < 2) return -1;
-        String lobbyId = parts[1];
-        if (lobbyId.charAt(lobbyId.length() - 1) == ']') {
-            lobbyId = lobbyId.split(" ")[0];
+        // Extract server/lobby ID from the last line: "03/31/26  m85CG" or "03/31/26  L29H"
+        String lastLine = ColorUtil.strip(sidebar.get(sidebar.size() - 1)).trim();
+        String[] dateParts = lastLine.split("  ");
+        if (dateParts.length >= 2) {
+            String lobbyId = dateParts[dateParts.length - 1].trim();
+            if (!lobbyId.isEmpty()) {
+                currentLobby = lobbyId;
+                // Lobby IDs starting with 'L' = BW lobby (not in a game yet)
+                if (lobbyId.charAt(0) == 'L') return 1;
+            }
         }
-        currentLobby = lobbyId;
 
-        if (lobbyId.charAt(0) == 'L') return 1;
-
-        String line5 = ColorUtil.strip(sidebar.get(5));
-        String line6 = ColorUtil.strip(sidebar.get(6));
-        if (line5.startsWith("R Red:") && line6.startsWith("B Blue:")) return 3;
-        if (line6.equals("Waiting...") || line6.startsWith("Starting in")) return 2;
+        // Check all lines for status indicators
+        for (String line : sidebar) {
+            String stripped = ColorUtil.strip(line).trim();
+            if (stripped.equals("Waiting...") || stripped.startsWith("Starting in")) return 2;
+            // Team status lines like "R Red: ✓" or "B Blue: ✗" indicate in-game
+            if (stripped.length() >= 2 && stripped.charAt(1) == ' '
+                    && (stripped.contains("Red:") || stripped.contains("Blue:")
+                     || stripped.contains("Green:") || stripped.contains("Yellow:")
+                     || stripped.contains("Aqua:") || stripped.contains("White:")
+                     || stripped.contains("Pink:") || stripped.contains("Gray:"))) {
+                return 3;
+            }
+        }
 
         return -1;
+    }
+
+    /** Returns sidebar title (objective display name), or null if no sidebar. */
+    private String getSidebarTitle() {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.theWorld == null) return null;
+        Scoreboard sb = mc.theWorld.getScoreboard();
+        ScoreObjective obj = sb.getObjectiveInDisplaySlot(1);
+        if (obj == null) return null;
+        return obj.getDisplayName();
     }
 
     /** Returns sidebar lines top→bottom (index 0 = top). getSortedScores is descending, so no reverse. */
@@ -386,6 +440,104 @@ public class OverlayManager {
         }
         // getSortedScores returns descending (highest score = top of sidebar = index 0)
         return lines;
+    }
+
+    private void dumpScoreboard() {
+        String title = getSidebarTitle();
+        List<String> sidebar = getSidebarLines();
+        if (sidebar == null || title == null) {
+            debug("Scoreboard: \u00a7cnull \u00a77(no sidebar objective)");
+            return;
+        }
+        debug("Scoreboard: \u00a7a" + sidebar.size() + " lines \u00a77| title=\u00a7f" + title + " \u00a78-> \u00a7e" + ColorUtil.strip(title)
+            + " \u00a77| status=\u00a7e" + status + " \u00a77| lobby=\u00a7e" + currentLobby + " \u00a77| inBwPregame=\u00a7e" + inBwPregame);
+        for (int i = 0; i < sidebar.size(); i++) {
+            String raw = sidebar.get(i);
+            String stripped = ColorUtil.strip(raw);
+            debug("  [" + i + "] \u00a7f" + raw + " \u00a78-> \u00a77" + stripped);
+        }
+    }
+
+    private void dumpTablist() {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.getNetHandler() == null) {
+            debug("Tablist: \u00a7cnull \u00a77(no net handler)");
+            return;
+        }
+
+        List<NetworkPlayerInfo> tab = new ArrayList<>(mc.getNetHandler().getPlayerInfoMap());
+        debug("Tablist: \u00a7a" + tab.size() + " entries \u00a77| status=\u00a7e" + status + " \u00a77| lobby=\u00a7e" + currentLobby
+            + " \u00a77| inBwPregame=\u00a7e" + inBwPregame + " \u00a77| showYourself=\u00a7e" + showYourself);
+
+        for (int i = 0; i < tab.size(); i++) {
+            NetworkPlayerInfo npi = tab.get(i);
+            String raw = npi.getDisplayName() != null
+                    ? npi.getDisplayName().getFormattedText()
+                    : npi.getGameProfile().getName();
+            String stripped = ColorUtil.strip(raw);
+            String name = npi.getGameProfile().getName();
+            String uuid = npi.getGameProfile().getId() != null ? npi.getGameProfile().getId().toString() : "null";
+            int ping = npi.getResponseTime();
+            boolean bot = isBot(npi);
+            ScorePlayerTeam sbTeam = mc.theWorld != null ? mc.theWorld.getScoreboard().getPlayersTeam(name) : null;
+            String teamName = sbTeam != null ? sbTeam.getRegisteredName() : "none";
+
+            debug("  [" + i + "] \u00a7f" + raw + " \u00a78-> \u00a77" + stripped
+                + " \u00a77| name=\u00a7e" + name
+                + " \u00a77| ping=\u00a7e" + ping
+                + " \u00a77| bot=\u00a7e" + bot
+                + " \u00a77| team=\u00a7e" + teamName
+                + " \u00a77| uuid=\u00a7e" + uuid);
+        }
+    }
+
+    private String getTeamDisplayFromTab(NetworkPlayerInfo pla, String fallbackDisplayName) {
+        String raw = fallbackDisplayName != null ? fallbackDisplayName : pla.getGameProfile().getName();
+        String stripped = ColorUtil.strip(raw);
+        String baseName = pla.getGameProfile().getName();
+        if (!stripped.equalsIgnoreCase(baseName)) {
+            String[] parts = stripped.split(" ");
+            if (parts.length >= 2) {
+                String suffixName = parts[parts.length - 1];
+                if (suffixName.equalsIgnoreCase(baseName)) {
+                    return showTeamPrefix ? raw : suffixName;
+                }
+            }
+        }
+
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.theWorld == null) return null;
+        ScorePlayerTeam team = mc.theWorld.getScoreboard().getPlayersTeam(baseName);
+        if (team == null) return null;
+
+        if (showTeamPrefix) {
+            String formatted = ScorePlayerTeam.formatPlayerName(team, baseName);
+            String formattedStripped = ColorUtil.strip(formatted);
+            if (!formattedStripped.equalsIgnoreCase(baseName)) {
+                return formatted;
+            }
+            String marker = getTeamMarker(team.getRegisteredName());
+            if (!marker.isEmpty()) {
+                return team.getColorPrefix() + marker + " " + baseName + team.getColorSuffix();
+            }
+            return team.getColorPrefix() + baseName + team.getColorSuffix();
+        }
+
+        return team.getColorPrefix() + baseName + team.getColorSuffix();
+    }
+
+    private String getTeamMarker(String teamName) {
+        if (teamName == null) return "";
+        String n = teamName.toLowerCase(Locale.ROOT);
+        if (n.contains("red")) return "R";
+        if (n.contains("blue")) return "B";
+        if (n.contains("green")) return "G";
+        if (n.contains("yellow")) return "Y";
+        if (n.contains("aqua")) return "A";
+        if (n.contains("white")) return "W";
+        if (n.contains("pink")) return "P";
+        if (n.contains("gray") || n.contains("grey")) return "G";
+        return "";
     }
 
     // ==========================================================================
@@ -418,7 +570,11 @@ public class OverlayManager {
         // In-game: display name must contain a space (team prefix like "R PlayerName")
         if (status == 3) {
             String dn = pla.getDisplayName() != null ? pla.getDisplayName().getFormattedText() : "";
-            if (!ColorUtil.strip(dn).contains(" ")) return true;
+            if (!ColorUtil.strip(dn).contains(" ")) {
+                Minecraft mc = Minecraft.getMinecraft();
+                ScorePlayerTeam team = mc.theWorld != null ? mc.theWorld.getScoreboard().getPlayersTeam(pla.getGameProfile().getName()) : null;
+                if (team == null) return true;
+            }
         }
 
         return false;
@@ -680,6 +836,22 @@ public class OverlayManager {
             }
         }
 
+        // Alternate pregame format: "+ (01/16) PlayerName" (used in some game modes)
+        {
+            Matcher listMatcher = PREGAME_LIST.matcher(msg);
+            if (listMatcher.matches()) {
+                inBwPregame = true;
+                debug("Pregame list entry: " + listMatcher.group(1) + " | lobby=" + currentLobby + " status=" + status);
+                addChatPlayer(listMatcher.group(1), currentLobby);
+            }
+        }
+
+        // Detect game start via "Protect your bed" message
+        if (msg.contains("Protect your bed and destroy the enemy beds")) {
+            inBwPregame = true;
+            debug("Game start detected (Protect your bed) | lobby=" + currentLobby + " status=" + status);
+        }
+
         // Auto-trigger /who when someone joins (only needed for join-time sorting)
         if (sortBy.equals(JOIN_VALUE) && dowho
                 && ((msg.endsWith("!") && msg.contains("has joined"))
@@ -744,6 +916,9 @@ public class OverlayManager {
                             : npi.getGameProfile().getName();
                     final String fu = uuid, fn = displayName, fl = currentLobby;
                     addPlaceholderStats(fu, fn, true);
+                    Map<String, Object> keepData = new HashMap<>();
+                    keepData.put(PREGAME_KEEP_KEY, true);
+                    addToOverlay(fu, keepData);
                     addToPlayers(fu);
                     new Thread(() -> handlePlayerStats(fu, fl)).start();
                     new Thread(() -> handleUrchinTag(fu, fl)).start();
@@ -762,6 +937,9 @@ public class OverlayManager {
                         if (isInOverlay(fu) || ignoredPlayers.containsKey(playerName.toLowerCase())) return;
                         synchronized (currentPlayers) {
                             addPlaceholderStats(fu, fn, true);
+                            Map<String, Object> keepData = new HashMap<>();
+                            keepData.put(PREGAME_KEEP_KEY, true);
+                            addToOverlay(fu, keepData);
                             addToPlayers(fu);
                         }
                         handlePlayerStats(fu, lobby);
@@ -789,8 +967,9 @@ public class OverlayManager {
         if (inBwPregame || status >= 1) {
             Matcher m = CHAT_SENDER.matcher(msg);
             if (m.matches()) {
-                debug("Chat sender detected: " + m.group(1) + " | inBwPregame=" + inBwPregame + " status=" + status);
-                addChatPlayer(m.group(1), currentLobby);
+                String sender = m.group(1);
+                debug("Chat sender detected: " + sender + " | inBwPregame=" + inBwPregame + " status=" + status);
+                addChatPlayer(sender, currentLobby);
             }
         }
 
@@ -798,6 +977,15 @@ public class OverlayManager {
     }
 
     private void addChatPlayer(String name, String lobby) {
+        boolean fromPregame = inBwPregame || status == 2;
+        addChatPlayer(name, lobby, true, fromPregame);
+    }
+
+    private void addChatPlayer(String name, String lobby, boolean allowApiFallback) {
+        addChatPlayer(name, lobby, allowApiFallback, false);
+    }
+
+    private void addChatPlayer(String name, String lobby, boolean allowApiFallback, boolean markPregameKeep) {
         for (Map<String, Object> op : overlayPlayers.values()) {
             Object u = op.get(PLAYER_KEY);
             if (u instanceof String && ColorUtil.strip((String) u).equalsIgnoreCase(name)) {
@@ -811,12 +999,7 @@ public class OverlayManager {
         }
 
         Minecraft mc = Minecraft.getMinecraft();
-        NetworkPlayerInfo npi = null;
-        if (mc.getNetHandler() != null) {
-            for (NetworkPlayerInfo info : mc.getNetHandler().getPlayerInfoMap()) {
-                if (info.getGameProfile().getName().equalsIgnoreCase(name)) { npi = info; break; }
-            }
-        }
+        NetworkPlayerInfo npi = findTabPlayer(name);
         if (npi != null) {
             String uuid = npi.getGameProfile().getId().toString().replace("-", "");
             if (isInOverlay(uuid)) return;
@@ -825,32 +1008,43 @@ public class OverlayManager {
             debug("addChatPlayer: " + name + " found in tab list, uuid=" + uuid);
             final String fu = uuid, fn = displayName, fl = lobby;
             addPlaceholderStats(fu, fn, true);
+            if (markPregameKeep) {
+                Map<String, Object> keepData = new HashMap<>();
+                keepData.put(PREGAME_KEEP_KEY, true);
+                addToOverlay(fu, keepData);
+            }
             addToPlayers(fu);
             new Thread(() -> handlePlayerStats(fu, fl)).start();
             new Thread(() -> handleUrchinTag(fu, fl)).start();
         } else {
+            if (!allowApiFallback) {
+                debug("addChatPlayer: " + name + " not in tab list, skipping API fallback");
+                return;
+            }
             debug("addChatPlayer: " + name + " not in tab list, resolving UUID async...");
             final String playerName = name, fl = lobby;
             new Thread(() -> {
                 // Wait for the tab list to populate before giving up on it
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
-                if (isInOverlay(playerName) || ignoredPlayers.containsKey(playerName.toLowerCase())) return;
+                if (ignoredPlayers.containsKey(playerName.toLowerCase())) return;
 
                 // Retry tab list lookup after the delay
-                Minecraft mc2 = Minecraft.getMinecraft();
-                NetworkPlayerInfo npi2 = null;
-                if (mc2.getNetHandler() != null) {
-                    for (NetworkPlayerInfo info : mc2.getNetHandler().getPlayerInfoMap()) {
-                        if (info.getGameProfile().getName().equalsIgnoreCase(playerName)) { npi2 = info; break; }
-                    }
-                }
+                NetworkPlayerInfo npi2 = findTabPlayer(playerName);
                 if (npi2 != null) {
                     String uuid = npi2.getGameProfile().getId().toString().replace("-", "");
                     if (isInOverlay(uuid) || ignoredPlayers.containsKey(playerName.toLowerCase())) return;
                     String displayName = npi2.getDisplayName() != null
                             ? npi2.getDisplayName().getFormattedText() : npi2.getGameProfile().getName();
                     final String fu = uuid, fn = displayName;
-                    synchronized (currentPlayers) { addPlaceholderStats(fu, fn, true); addToPlayers(fu); }
+                    synchronized (currentPlayers) {
+                        addPlaceholderStats(fu, fn, true);
+                        if (markPregameKeep) {
+                            Map<String, Object> keepData = new HashMap<>();
+                            keepData.put(PREGAME_KEEP_KEY, true);
+                            addToOverlay(fu, keepData);
+                        }
+                        addToPlayers(fu);
+                    }
                     handlePlayerStats(fu, fl);
                     handleUrchinTag(fu, fl);
                     return;
@@ -863,19 +1057,35 @@ public class OverlayManager {
                 if (uuid == null || uuid.isEmpty()) return;
                 final String fu = uuid, fn = username.isEmpty() ? playerName : username;
                 if (isInOverlay(fu) || ignoredPlayers.containsKey(playerName.toLowerCase())) return;
-                synchronized (currentPlayers) { addPlaceholderStats(fu, fn, true); addToPlayers(fu); }
+                synchronized (currentPlayers) {
+                    addPlaceholderStats(fu, fn, true);
+                    if (markPregameKeep) {
+                        Map<String, Object> keepData = new HashMap<>();
+                        keepData.put(PREGAME_KEEP_KEY, true);
+                        addToOverlay(fu, keepData);
+                    }
+                    addToPlayers(fu);
+                }
                 handlePlayerStats(fu, fl);
                 handleUrchinTag(fu, fl);
             }).start();
         }
     }
 
+    private NetworkPlayerInfo findTabPlayer(String name) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.getNetHandler() == null) return null;
+        for (NetworkPlayerInfo info : mc.getNetHandler().getPlayerInfoMap()) {
+            if (info.getGameProfile().getName().equalsIgnoreCase(name)) return info;
+        }
+        return null;
+    }
+
     private void removePlayerByName(String name) {
         synchronized (currentPlayers) {
             String targetUuid = null;
             for (Map.Entry<String, Map<String, Object>> entry : overlayPlayers.entrySet()) {
-                Object u = entry.getValue().get(PLAYER_KEY);
-                if (u instanceof String && ColorUtil.strip((String) u).equalsIgnoreCase(name)) {
+                if (matchesPlayerName(entry.getValue(), name)) {
                     targetUuid = entry.getKey();
                     break;
                 }
@@ -888,6 +1098,31 @@ public class OverlayManager {
                 debug("Final kill: player " + name + " not found in overlay");
             }
         }
+    }
+
+    private boolean matchesPlayerName(Map<String, Object> playerData, String name) {
+        Object usernameObj = playerData.get("username");
+        if (usernameObj instanceof String && ((String) usernameObj).equalsIgnoreCase(name)) {
+            return true;
+        }
+
+        Object playerObj = playerData.get(PLAYER_KEY);
+        if (!(playerObj instanceof String)) {
+            return false;
+        }
+
+        String plain = ColorUtil.strip((String) playerObj).trim();
+        if (plain.equalsIgnoreCase(name)) {
+            return true;
+        }
+
+        int spaceIdx = plain.lastIndexOf(' ');
+        if (spaceIdx >= 0 && spaceIdx + 1 < plain.length()) {
+            String trailing = plain.substring(spaceIdx + 1);
+            return trailing.equalsIgnoreCase(name);
+        }
+
+        return false;
     }
 
     // ==========================================================================
@@ -1256,6 +1491,26 @@ public class OverlayManager {
                 print(PREFIX + "\u00a7eCleared \u00a73" + cnt + "\u00a7e player" + (cnt != 1 ? "s." : "."));
                 return;
 
+            case "debugsb":
+                if (!LazifyConfig.INSTANCE.isDebug()) {
+                    print(PREFIX + "\u00a7cEnable debug mode first: \u00a73/ov debug");
+                    return;
+                }
+                debugScoreboard = !debugScoreboard;
+                debugSbCooldown = 0;
+                print(PREFIX + "\u00a7eScoreboard debug " + (debugScoreboard ? "\u00a7aenabled \u00a7e(printing every 5s)" : "\u00a7cdisabled"));
+                return;
+
+            case "debugtab":
+                if (!LazifyConfig.INSTANCE.isDebug()) {
+                    print(PREFIX + "\u00a7cEnable debug mode first: \u00a73/ov debug");
+                    return;
+                }
+                debugTablist = !debugTablist;
+                debugTabCooldown = 0;
+                print(PREFIX + "\u00a7eTablist debug " + (debugTablist ? "\u00a7aenabled \u00a7e(printing every 5s)" : "\u00a7cdisabled"));
+                return;
+
             case "key":
                 if (args.length < 3) { print(PREFIX + "\u00a7eUsage: \u00a73/ov key <hypixel|urchin> <key>"); return; }
                 String keyType = args[1].toLowerCase();
@@ -1410,6 +1665,10 @@ public class OverlayManager {
         print(PREFIX + "\u00a77reload\u00a77 \u00a7e\u2013 re-fetch stats for everyone");
         print(PREFIX + "\u00a77clear\u00a77 \u00a7e\u2013 remove all players from overlay");
         print(PREFIX + "\u00a77key \u00a7e<hypixel|urchin> <key>\u00a77 \u00a7e\u2013 set API key");
+        if (LazifyConfig.INSTANCE.isDebug()) {
+            print(PREFIX + "\u00a78debugsb\u00a77 \u00a7e\u2013 dump scoreboard data to chat");
+            print(PREFIX + "\u00a78debugtab\u00a77 \u00a7e\u2013 dump tab list data to chat");
+        }
     }
 
     private void printStatus() {
@@ -1566,14 +1825,18 @@ public class OverlayManager {
 
     private int timeUntilStart() {
         List<String> sb = getSidebarLines();
-        if (sb == null || sb.size() < 7) return -1;
-        String line = ColorUtil.strip(sb.get(6));
-        if (line.equals("Waiting...")) return 20;
-        if (!line.startsWith("Starting in ")) return -1;
-        String[] parts = line.split(" ");
-        String last = parts[parts.length - 1];
-        if (!last.endsWith("s")) return -1;
-        try { return Integer.parseInt(last.substring(0, last.length() - 1)); }
-        catch (NumberFormatException e) { return -1; }
+        if (sb == null) return -1;
+        for (String rawLine : sb) {
+            String line = ColorUtil.strip(rawLine).trim();
+            if (line.equals("Waiting...")) return 20;
+            if (line.startsWith("Starting in ")) {
+                String[] parts = line.split(" ");
+                String last = parts[parts.length - 1];
+                if (!last.endsWith("s")) continue;
+                try { return Integer.parseInt(last.substring(0, last.length() - 1)); }
+                catch (NumberFormatException e) { continue; }
+            }
+        }
+        return -1;
     }
 }

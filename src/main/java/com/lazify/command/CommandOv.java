@@ -1,5 +1,6 @@
 package com.lazify.command;
 
+import com.lazify.config.LazifyConfig;
 import com.lazify.overlay.OverlayManager;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.ICommandSender;
@@ -34,6 +35,10 @@ public class CommandOv extends CommandBase {
         if (args.length == 1) {
             for (String s : CONTROL_CMDS)              addIf(opts, s, a0);
             for (String s : OverlayManager.ALL_SETTINGS) addIf(opts, s, a0);
+            if (LazifyConfig.INSTANCE.isDebug()) {
+                addIf(opts, "debugsb", a0);
+                addIf(opts, "debugtab", a0);
+            }
             return opts;
         }
 
