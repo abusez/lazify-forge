@@ -12,10 +12,6 @@ public class LazifyConfig {
 
     // API keys
     private String urchinKey  = "";
-    private String hypixelKey = "";
-
-    // API provider
-    private boolean usePrism = true;
 
     // keybind behaviour
     private boolean keybindHold = false;
@@ -33,6 +29,8 @@ public class LazifyConfig {
     private boolean sendUrchinReasonToChat = false;
     private boolean showRanks              = false;
     private boolean removeFinalKill        = false;
+    private boolean autoTablist            = true;
+    private boolean clearOnWho             = false;
 
     // column visibility
     private boolean colEncounters = true;
@@ -71,8 +69,6 @@ public class LazifyConfig {
 
     private void syncFromFile() {
         urchinKey  = config.getString("urchinKey",  "api", "", "Your Urchin API key (https://urchin.ws)");
-        hypixelKey = config.getString("hypixelKey", "api", "", "Your Hypixel API key (/api new on Hypixel)");
-        usePrism   = config.getBoolean("usePrism",  "api", true, "true=Prism API (no key needed), false=Hypixel API (key required)");
 
         debug       = config.getBoolean("debug",       "general", false, "Print debug messages to chat");
         keybindHold = config.getBoolean("keybindHold", "general", false, "true=show overlay while key held, false=toggle");
@@ -86,6 +82,8 @@ public class LazifyConfig {
         sendUrchinReasonToChat = config.getBoolean("sendUrchinReasonToChat", "general", false, "Print Urchin tag reason to chat");
         showRanks              = config.getBoolean("showRanks",              "general", false, "Show formatted rank prefix next to name");
         removeFinalKill        = config.getBoolean("removeFinalKill",        "general", false, "Remove players from overlay on final kill");
+        autoTablist            = config.getBoolean("autoTablist",            "general", true,  "Auto-detect players from tab list");
+        clearOnWho             = config.getBoolean("clearOnWho",             "general", false, "Clear overlay when /who response is received");
 
         colEncounters = config.getBoolean("colEncounters", "columns", true, "Show Encounters column");
         colUsername   = config.getBoolean("colUsername",   "columns", true, "Show Username column");
@@ -112,8 +110,6 @@ public class LazifyConfig {
     public void save() {
         if (config == null) return;
         config.get("api",      "urchinKey",              "").set(urchinKey);
-        config.get("api",      "hypixelKey",             "").set(hypixelKey);
-        config.get("api",      "usePrism",               true).set(usePrism);
         config.get("general",  "debug",                  false).set(debug);
         config.get("general",  "keybindHold",            false).set(keybindHold);
         config.get("general",  "showOnTab",              true).set(showOnTab);
@@ -125,6 +121,8 @@ public class LazifyConfig {
         config.get("general",  "sendUrchinReasonToChat", false).set(sendUrchinReasonToChat);
         config.get("general",  "showRanks",              false).set(showRanks);
         config.get("general",  "removeFinalKill",        false).set(removeFinalKill);
+        config.get("general",  "autoTablist",            true).set(autoTablist);
+        config.get("general",  "clearOnWho",             false).set(clearOnWho);
         config.get("columns",  "colEncounters",          true).set(colEncounters);
         config.get("columns",  "colUsername",            true).set(colUsername);
         config.get("columns",  "colStar",                true).set(colStar);
@@ -147,8 +145,6 @@ public class LazifyConfig {
 
     // ── Getters ────────────────────────────────────────────────────────────────
     public String  getUrchinKey()              { return urchinKey; }
-    public String  getHypixelKey()             { return hypixelKey; }
-    public boolean isUsePrism()                { return usePrism; }
     public boolean isDebug()                   { return debug; }
     public boolean isKeybindHold()             { return keybindHold; }
     public boolean isShowOnTab()              { return showOnTab; }
@@ -160,6 +156,8 @@ public class LazifyConfig {
     public boolean isSendUrchinReasonToChat()  { return sendUrchinReasonToChat; }
     public boolean isShowRanks()               { return showRanks; }
     public boolean isRemoveFinalKill()         { return removeFinalKill; }
+    public boolean isAutoTablist()             { return autoTablist; }
+    public boolean isClearOnWho()              { return clearOnWho; }
     public boolean isColEncounters()           { return colEncounters; }
     public boolean isColUsername()             { return colUsername; }
     public boolean isColStar()                 { return colStar; }
@@ -180,8 +178,6 @@ public class LazifyConfig {
 
     // ── Setters ────────��────────────────────────────────────���──────────────────
     public void setUrchinKey(String v)             { urchinKey = v; }
-    public void setHypixelKey(String v)            { hypixelKey = v; }
-    public void setUsePrism(boolean v)             { usePrism = v; }
     public void setDebug(boolean v)                { debug = v; }
     public void setKeybindHold(boolean v)          { keybindHold = v; }
     public void setShowOnTab(boolean v)            { showOnTab = v; }
@@ -193,6 +189,8 @@ public class LazifyConfig {
     public void setSendUrchinReasonToChat(boolean v) { sendUrchinReasonToChat = v; }
     public void setShowRanks(boolean v)            { showRanks = v; }
     public void setRemoveFinalKill(boolean v)      { removeFinalKill = v; }
+    public void setAutoTablist(boolean v)          { autoTablist = v; }
+    public void setClearOnWho(boolean v)           { clearOnWho = v; }
     public void setColEncounters(boolean v)        { colEncounters = v; }
     public void setColUsername(boolean v)           { colUsername = v; }
     public void setColStar(boolean v)              { colStar = v; }

@@ -203,7 +203,8 @@ public class ColorUtil {
     }
 
     public static String getRankColor(String rank) {
-        switch (rank) {
+        String n = normalizeRank(rank);
+        switch (n) {
             case "VIP": case "VIP+":             return "\u00a7a";
             case "MVP": case "MVP+":             return "\u00a7b";
             case "MVP++":                        return "\u00a76";
@@ -212,6 +213,23 @@ public class ColorUtil {
             case "GM":                           return "\u00a72";
             case "PIG+++":                       return "\u00a7d";
             default:                             return "\u00a77";
+        }
+    }
+
+    /** Normalize API rank strings (e.g. "MVP_PLUS" → "MVP+", "SUPERSTAR" → "MVP++") */
+    public static String normalizeRank(String rank) {
+        if (rank == null || rank.isEmpty()) return "";
+        switch (rank) {
+            case "VIP_PLUS":    return "VIP+";
+            case "MVP_PLUS":    return "MVP+";
+            case "SUPERSTAR":   return "MVP++";
+            case "GAME_MASTER": return "GM";
+            case "YOUTUBER":    return "YOUTUBE";
+            // Already normalized forms pass through
+            case "VIP": case "VIP+": case "MVP": case "MVP+": case "MVP++":
+            case "GM": case "YOUTUBE": case "ADMIN": case "OWNER": case "PIG+++":
+                return rank;
+            default: return rank;
         }
     }
 
@@ -247,6 +265,25 @@ public class ColorUtil {
             case "MVP":    return "\u00a7b[MVP]";
             case "MVP+":   return "\u00a7b[MVP"+colorCode+"+\u00a7b]";
             case "MVP++":  return "\u00a76[MVP"+colorCode+"++\u00a76]";
+            case "GM":     return "\u00a72[GM]";
+            case "YOUTUBE":return "\u00a7c[\u00a7fYOUTUBE\u00a7c]";
+            case "ADMIN":  return "\u00a7c[ADMIN]";
+            case "OWNER":  return "\u00a7c[OWNER]";
+            case "PIG+++": return "\u00a7d[PIG\u00a7b+++\u00a7d]";
+            default:       return "\u00a77";
+        }
+    }
+
+    /** Formatted rank display from a raw API rank string (no plus color info available) */
+    public static String getFormattedRankFromStr(String apiRank) {
+        String rank = normalizeRank(apiRank);
+        if (rank.isEmpty()) return "\u00a77";
+        switch (rank) {
+            case "VIP":    return "\u00a7a[VIP]";
+            case "VIP+":   return "\u00a7a[VIP\u00a76+\u00a7a]";
+            case "MVP":    return "\u00a7b[MVP]";
+            case "MVP+":   return "\u00a7b[MVP\u00a7c+\u00a7b]";
+            case "MVP++":  return "\u00a76[MVP\u00a7c++\u00a76]";
             case "GM":     return "\u00a72[GM]";
             case "YOUTUBE":return "\u00a7c[\u00a7fYOUTUBE\u00a7c]";
             case "ADMIN":  return "\u00a7c[ADMIN]";

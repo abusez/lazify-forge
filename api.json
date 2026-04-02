@@ -1,0 +1,270 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Mellow — Hypixel Stats API",
+    "version": "1.0.0",
+    "description": "Player stats waterfall (Abyss → Prism → Hypixel API), UUID resolution, tags, skins, denicking, and duels."
+  },
+  "servers": [
+    {
+      "url": "/v1"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Server auth key (set in .env API_KEYS). Leave blank if auth is disabled."
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/player/{username}": {
+      "get": {
+        "summary": "Player Stats",
+        "description": "Full player stats across all 22 game modes. Waterfall: Abyss → Prism → Hypixel API.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Minecraft username"
+          },
+          {
+            "name": "X-Hypixel-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your Hypixel API key (optional fallback)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Normalized player stats"
+          },
+          "404": {
+            "description": "Player not found"
+          },
+          "502": {
+            "description": "All stat providers failed"
+          }
+        }
+      }
+    },
+    "/uuid/{username}": {
+      "get": {
+        "summary": "Resolve UUID",
+        "description": "Resolve a Minecraft username to UUID. Waterfall: Mojang Services → Mojang API → PlayerDB.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Minecraft username"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "UUID resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string"
+                    },
+                    "uuid": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Player not found"
+          }
+        }
+      }
+    },
+    "/tags/{username}": {
+      "get": {
+        "summary": "Player Tags",
+        "description": "Fetch blacklist/tags from Urchin and Seraph.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Minecraft username"
+          },
+          {
+            "name": "X-Urchin-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your Urchin API key"
+          },
+          {
+            "name": "X-Seraph-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your Seraph API key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tags from both providers"
+          },
+          "404": {
+            "description": "Player not found"
+          }
+        }
+      }
+    },
+    "/skin/{username}": {
+      "get": {
+        "summary": "Player Skin",
+        "description": "Fetch skin and cape data from Mojang session server. No external key needed.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Minecraft username"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skin/cape URLs and model type"
+          },
+          "404": {
+            "description": "Player or skin not found"
+          }
+        }
+      }
+    },
+    "/denick": {
+      "get": {
+        "summary": "Denick Lookup",
+        "description": "Aurora denicker — find players by stat values.",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "finals",
+                "beds"
+              ]
+            },
+            "description": "Lookup type"
+          },
+          {
+            "name": "value",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stat value to search for"
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100
+            },
+            "description": "Range tolerance"
+          },
+          {
+            "name": "max",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 5
+            },
+            "description": "Max results"
+          },
+          {
+            "name": "X-Aurora-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Your Aurora API key"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching players"
+          },
+          "400": {
+            "description": "Invalid parameters"
+          },
+          "401": {
+            "description": "Missing Aurora key"
+          }
+        }
+      }
+    },
+    "/duels/{username}": {
+      "get": {
+        "summary": "Duels Stats (Plancke)",
+        "description": "All Duels mode stats scraped from Plancke.io. No external key needed.",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Minecraft username"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Duels mode breakdown"
+          },
+          "404": {
+            "description": "No Duels data found"
+          }
+        }
+      }
+    }
+  }
+}

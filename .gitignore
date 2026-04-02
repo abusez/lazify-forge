@@ -36,3 +36,4 @@ Thumbs.db
 # Local config (contains API keys)
 src/main/resources/lazify.cfg
 run/config/
+local.properties

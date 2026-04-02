@@ -1,6 +1,7 @@
 package com.lazify.overlay;
 
 import com.lazify.LazifyMod;
+import com.lazify.api.ApiCredentials;
 import com.lazify.api.HttpUtil;
 import com.lazify.api.JsonWrapper;
 import com.lazify.config.LazifyConfig;
@@ -49,15 +50,16 @@ public class OverlayManager {
     // ── API keys (read from config) ────────────────────────────────────────────
     private String urchinKey()  { return LazifyConfig.INSTANCE.getUrchinKey(); }
 
-    // ── Prism API headers ─────────────────────────────────────────────────────
-    private static final String PRISM_USER_ID = UUID.randomUUID().toString().replace("-", "");
-    private static final Map<String, String> PRISM_HEADERS;
+    // ── API headers ─────────────────────────────────────────────────────────────
+    private static final Map<String, String> API_HEADERS;
     static {
         Map<String, String> h = new HashMap<>();
-        h.put("X-User-Id", PRISM_USER_ID);
-        h.put("X-Prism-Version", "v1.11.0");
-        PRISM_HEADERS = h;
+        h.put("X-API-Key", ApiCredentials.getKey());
+        API_HEADERS = h;
     }
+
+    // UUID → raw username mapping (for API calls that take username)
+    private final Map<String, String> uuidToName = new ConcurrentHashMap<>();
 
     // ── Core state (keyed by UUID without dashes) ──────────────────────────────
     Map<String, Map<String, Object>> overlayPlayers = new ConcurrentHashMap<>();
@@ -143,13 +145,14 @@ public class OverlayManager {
 
         tags.add("nofinaldeaths");
         tags.add("language");
+        tags.add("apinicked");
 
         defaultSettings();
         print(PREFIX + "\u00a7eWelcome to \u00a73Lazify\u00a7e! Please run \u00a73/ov\u00a7e for commands.");
         if (urchinKey().isEmpty())
             print(PREFIX + "\u00a7eNo Urchin API key set. Use \u00a73/ov key urchin <key>\u00a7e to enable cheater tags.");
-        if (!LazifyConfig.INSTANCE.isUsePrism() && LazifyConfig.INSTANCE.getHypixelKey().isEmpty())
-            print(PREFIX + "\u00a7cHypixel API selected but no key set. Use \u00a73/ov key hypixel <key>\u00a7c or \u00a73/ov useprism\u00a7c to switch.");
+        if (ApiCredentials.getUrl().isEmpty())
+            print(PREFIX + "\u00a7cStats API not configured. Overlay will not fetch player stats.");
     }
 
     private void addColumn(String display, String header, String key) {
@@ -231,7 +234,8 @@ public class OverlayManager {
 
         doColumns(true);
 
-        if (status < 1) return;
+        if (status < 1 && !inBwPregame) return;
+        if (!LazifyConfig.INSTANCE.isAutoTablist()) return;
 
         Set<String> currentEntityUUIDs = new HashSet<>();
         long currentTime = System.currentTimeMillis();
@@ -260,8 +264,19 @@ public class OverlayManager {
                     if (teamDisplay != null) {
                         String prev = teams.put(uuid, teamDisplay);
                         if (!teamDisplay.equals(prev)) {
+                            // Prepend rank prefix if showRanks is on
+                            String finalDisplay = teamDisplay;
+                            if (LazifyConfig.INSTANCE.isShowRanks()) {
+                                Map<String, Object> existing = overlayPlayers.get(uuid);
+                                if (existing != null) {
+                                    String rp = (String) existing.get("rankPrefix");
+                                    if (rp != null && !rp.isEmpty() && !rp.equals("\u00a77")) {
+                                        finalDisplay = rp + " " + teamDisplay;
+                                    }
+                                }
+                            }
                             Map<String, Object> teamData = new HashMap<>();
-                            teamData.put(PLAYER_KEY, teamDisplay);
+                            teamData.put(PLAYER_KEY, finalDisplay);
                             addToOverlay(uuid, teamData);
                         }
                     }
@@ -274,7 +289,7 @@ public class OverlayManager {
 
             // ── Track encounters ──────────────────────────────────────────────
             // UUID v4: char[14] of UUID-with-dashes is the version digit
-            String encKey = uuidWithDashes.charAt(14) == '4' ? uuid : username;
+            String encKey = isV4DashedUuid(uuidWithDashes) ? uuid : username;
             List<Object[]> encounters = playerEncounters.getOrDefault(encKey, new ArrayList<>());
             final long ct = currentTime;
             final int th = threshold;
@@ -293,7 +308,7 @@ public class OverlayManager {
             placeholder.put(PLAYER_KEY,       displayName);
 
             // Nick detection: UUID without dashes char[12] != '4' → nicked
-            if (uuid.charAt(12) != '4') {
+            if (isNickedKey(uuid)) {
                 debug("Nick detected: " + username + " uuid=" + uuid);
                 placeholder.put("nicked", true);
                 placeholder.put(PLAYER_KEY, username);
@@ -340,7 +355,7 @@ public class OverlayManager {
             }
             for (String uuid : overlayPlayers.keySet()) {
                 if (!currentPlayers.contains(uuid)) {
-                    boolean isNicked = uuid.charAt(12) != '4';
+                    boolean isNicked = isNickedKey(uuid);
                     int insertAt = (ascending == isNicked) ? 0 : currentPlayers.size();
                     currentPlayers.add(insertAt, uuid);
                     doColumns(false);
@@ -551,10 +566,9 @@ public class OverlayManager {
 
         // UUID with dashes: char[14] is version digit
         String uuidDashes = pla.getGameProfile().getId().toString();
-        if (uuidDashes.length() >= 15) {
-            char c14 = uuidDashes.charAt(14);
-            if (c14 != '4' && c14 != '1') return true;
-        }
+        if (uuidDashes.length() < 15) return true;
+        char c14 = uuidDashes.charAt(14);
+        if (c14 != '4' && c14 != '1') return true;
 
         // Early ticks: red-named entries are boss bars / injected NPCs
         if (overlayTicks < 80) {
@@ -649,7 +663,7 @@ public class OverlayManager {
 
     void addToPlayers(String uuid) {
         synchronized (currentPlayers) {
-            boolean isNicked = uuid.charAt(12) != '4';
+            boolean isNicked = isNickedKey(uuid);
             if (ascending) {
                 currentPlayers.add(isNicked ? 0 : currentPlayers.size(), uuid);
             } else {
@@ -660,6 +674,8 @@ public class OverlayManager {
     }
 
     void addPlaceholderStats(String uuid, String username, boolean doName) {
+        String raw = ColorUtil.strip(username);
+        if (!raw.isEmpty() && !raw.equals("-")) uuidToName.put(uuid, raw);
         Map<String, Object> ph = new ConcurrentHashMap<>();
         for (ColumnDef col : columns) {
             if (!col.isEnabled()) continue;
@@ -772,7 +788,11 @@ public class OverlayManager {
 
                     if (isNicked) {
                         if (!key.equals(PLAYER_KEY) && !key.equals(ENCOUNTERS_KEY)) {
-                            statValue = "\u00a77-";
+                            if (key.equals(URCHIN_KEY) && ps.get(URCHIN_KEY) != null) {
+                                statValue = ps.get(URCHIN_KEY);
+                            } else {
+                                statValue = "\u00a77-";
+                            }
                         } else if (!teams.containsKey(uuid) && key.equals(PLAYER_KEY)) {
                             statValue = "\u00a7e" + stringVal.replaceAll("\u00a7.", "");
                         }
@@ -865,6 +885,11 @@ public class OverlayManager {
         }
 
         if (msg.startsWith("ONLINE: ")) {
+            if (LazifyConfig.INSTANCE.isClearOnWho()) {
+                debug("clearOnWho: clearing overlay before processing /who");
+                clearMaps();
+                overlayTicks = 5;
+            }
             String[] names = msg.replace("ONLINE: ", "").split(", ");
 
             // Update join-order values for players already in the overlay
@@ -1054,7 +1079,23 @@ public class OverlayManager {
                 String[] conv = convertPlayer(playerName);
                 String uuid = conv[0], username = conv[1];
                 if (uuid == null || uuid.isEmpty()) { conv = convertPlayerPlayerdb(playerName); uuid = conv[0]; username = conv[1]; }
-                if (uuid == null || uuid.isEmpty()) return;
+                if (uuid == null || uuid.isEmpty()) {
+                    // Unresolvable name — add as nicked with N tag
+                    final String fu = "nick_" + playerName.toLowerCase(), fn = playerName;
+                    if (isInOverlay(fu)) return;
+                    debugFromThread("addChatPlayer: " + playerName + " unresolvable, adding as nicked");
+                    synchronized (currentPlayers) {
+                        addPlaceholderStats(fu, fn, true);
+                        Map<String, Object> nickData = new ConcurrentHashMap<>();
+                        nickData.put("nicked", true);
+                        nickData.put("apinicked", "\u00a7eN");
+                        nickData.put(URCHIN_KEY, "\u00a7bN");
+                        if (markPregameKeep) nickData.put(PREGAME_KEEP_KEY, true);
+                        addToOverlay(fu, nickData);
+                        addToPlayers(fu);
+                    }
+                    return;
+                }
                 final String fu = uuid, fn = username.isEmpty() ? playerName : username;
                 if (isInOverlay(fu) || ignoredPlayers.containsKey(playerName.toLowerCase())) return;
                 synchronized (currentPlayers) {
@@ -1155,36 +1196,38 @@ public class OverlayManager {
             statsCache.remove(uuid);
         }
 
+        String username = uuidToName.get(uuid);
+        if (username == null || username.isEmpty()) {
+            debugFromThread("No username mapped for " + uuid + ", skipping stats fetch");
+            return;
+        }
+
         Map<String, Object> playerStats = new ConcurrentHashMap<>();
         try {
-            String url;
-            Map<String, String> headers = null;
-            if (LazifyConfig.INSTANCE.isUsePrism()) {
-                url = "https://flashlight.prismoverlay.com/v1/playerdata?uuid=" + uuid;
-                headers = PRISM_HEADERS;
-                debugFromThread("Fetching stats from Prism API for " + uuid);
-            } else {
-                String key = LazifyConfig.INSTANCE.getHypixelKey();
-                if (key.isEmpty()) {
-                    printFromThread(PREFIX + "\u00a7cNo Hypixel API key set. Use \u00a73/ov key hypixel <key>\u00a7c or switch to Prism with \u00a73/ov useprism");
-                    playerStats.put("error", true);
-                    if (isInOverlay(uuid) && currentLobby.equals(lobby)) addToOverlay(uuid, playerStats);
-                    return;
-                }
-                url = "https://api.hypixel.net/v2/player?key=" + key + "&uuid=" + uuid;
-                debugFromThread("Fetching stats from Hypixel API for " + uuid);
+            String baseUrl = ApiCredentials.getUrl();
+            if (baseUrl.isEmpty()) {
+                debugFromThread("API URL not configured");
+                playerStats.put("error", true);
+                if (isInOverlay(uuid) && currentLobby.equals(lobby)) addToOverlay(uuid, playerStats);
+                return;
             }
-            Object[] res = HttpUtil.get(url, 3000, headers);
+            String url = baseUrl + "/v1/player/" + username;
+            debugFromThread("Fetching stats for " + username + " (" + uuid + ")");
+            Object[] res = HttpUtil.get(url, 3000, API_HEADERS);
             int code = (int) res[1];
-            debugFromThread("Stats API response: HTTP " + code + " for " + uuid);
+            debugFromThread("Stats API response: HTTP " + code + " for " + username);
             if (code == 200) {
                 playerStats = parseStats((JsonWrapper) res[0], uuid);
+            } else if (code == 404) {
+                playerStats.put("nicked", true);
+                playerStats.put("apinicked", "\u00a7eN");
+                playerStats.put(URCHIN_KEY, "\u00a7bN");
             } else {
                 printFromThread(PREFIX + "\u00a7eHTTP Error \u00a73" + code + " \u00a7ewhile getting stats.");
                 playerStats.put("error", true);
             }
         } catch (Exception e) {
-            debugFromThread("Stats API exception for " + uuid + ": " + e.getMessage());
+            debugFromThread("Stats API exception for " + username + ": " + e.getMessage());
             printFromThread(PREFIX + "\u00a7eRuntime error while getting stats.");
             playerStats.put("error", true);
         }
@@ -1197,57 +1240,68 @@ public class OverlayManager {
         try {
             JsonWrapper data = jsonData.object();
 
-            // Null player → nicked
-            if (jsonData.string().contains("\"player\":null") || !data.object("player").exists()) {
+            // No bedwars data → nicked or never played
+            if (!data.object("bedwars").exists()) {
                 stats.put("nicked", true);
+                stats.put("apinicked", "\u00a7eN");
+                stats.put(URCHIN_KEY, "\u00a7bN");
                 return stats;
             }
 
-            JsonWrapper playerObject = data.object("player");
-            String username = playerObject.get("displayname", "");
-            stats.put("username", username);
+            JsonWrapper network = data.object("network");
+            JsonWrapper bw      = data.object("bedwars");
+            JsonWrapper overall  = bw.object("overall");
 
+            String username = data.get("username", "");
+            if (username.isEmpty()) username = uuidToName.getOrDefault(uuid, "");
+            stats.put("username", username);
+            if (!username.isEmpty()) uuidToName.put(uuid, username);
+
+            // Rank
+            String rankStr = network.exists() ? network.get("rank", "") : "";
             boolean showRanks = LazifyConfig.INSTANCE.isShowRanks();
-            String rank = showRanks ? ColorUtil.getFormattedRank(jsonData) : ColorUtil.getRankColor(ColorUtil.getRank(jsonData));
-            String coloredUsername = rank.length() == 2 ? rank + username : rank + " " + username;
-            if (status <= 2 && !teams.containsKey(uuid)) {
+            String rankPrefix = showRanks ? ColorUtil.getFormattedRankFromStr(rankStr) : "";
+            String rankColor  = ColorUtil.getRankColor(rankStr);
+            stats.put("rankPrefix", rankPrefix);
+            stats.put("rankColor",  rankColor);
+
+            if (teams.containsKey(uuid)) {
+                // Team display already set; prepend rank if enabled
+                String existing = (String) overlayPlayers.getOrDefault(uuid, Collections.<String, Object>emptyMap()).get(PLAYER_KEY);
+                if (existing != null && showRanks && !rankPrefix.equals("\u00a77") && !rankPrefix.isEmpty()) {
+                    stats.put(PLAYER_KEY, rankPrefix + " " + existing);
+                }
+            } else {
+                String coloredUsername = showRanks && !rankPrefix.equals("\u00a77") && !rankPrefix.isEmpty()
+                        ? rankPrefix + " " + rankColor + username
+                        : rankColor + username;
                 stats.put(PLAYER_KEY, coloredUsername);
             }
 
-            boolean hasBW = playerObject.object("stats").exists()
-                    && playerObject.object("stats").object("Bedwars").exists();
-
-            String language = playerObject.get("userLanguage", "ENGLISH");
+            // Language
+            String language = network.exists() ? network.get("language", "ENGLISH") : "ENGLISH";
             if (!language.equals("ENGLISH")) stats.put("language", "\u00a73L");
 
-            JsonWrapper bw = hasBW
-                    ? playerObject.object("stats").object("Bedwars")
-                    : JsonWrapper.parse("{}");
-
-            int expInt = (int) Double.parseDouble(bw.get("Experience", "0"));
-            int star   = (int) Math.floor(expToStars(expInt));
+            // Star
+            int star = (int) Double.parseDouble(overall.get("stars", overall.get("level", "0")));
             stats.put(STAR_KEY,   ColorUtil.getPrestigeColor(star));
             stats.put(STAR_VALUE, (double) star);
 
-            double finalKills  = Double.parseDouble(bw.get("final_kills_bedwars",  "0"));
-            double finalDeaths = Double.parseDouble(bw.get("final_deaths_bedwars", "0"));
-            if (finalDeaths == 0) stats.put("nofinaldeaths", "\u00a75Z");
-
-            double fkdr;
-            if (finalDeaths == 0) {
-                fkdr = finalKills;
-            } else {
-                fkdr = finalKills / finalDeaths < 10
-                        ? ColorUtil.round(finalKills / finalDeaths, 2)
-                        : ColorUtil.round(finalKills / finalDeaths, 1);
-            }
+            // FKDR
+            double fkdr = Double.parseDouble(overall.get("fkdr", "0"));
+            double finalKills  = Double.parseDouble(overall.get("final_kills", "0"));
+            double finalDeaths = Double.parseDouble(overall.get("final_deaths", "0"));
+            if (finalDeaths == 0 && fkdr == 0 && finalKills == 0) stats.put("nofinaldeaths", "\u00a75Z");
+            if (fkdr == 0 && finalDeaths > 0) fkdr = finalKills / finalDeaths;
+            fkdr = fkdr < 10 ? ColorUtil.round(fkdr, 2) : ColorUtil.round(fkdr, 1);
             double index = star * Math.pow(fkdr, 2);
             stats.put(FKDR_KEY,   ColorUtil.getFkdrColor(ColorUtil.formatDoubleStr(fkdr)));
             stats.put(FKDR_VALUE, fkdr);
             stats.put(INDEX_VALUE, index);
 
-            long lastLogin  = Long.parseLong(playerObject.get("lastLogin",  "0"));
-            long lastLogout = Long.parseLong(playerObject.get("lastLogout", "0"));
+            // Session
+            long lastLogin  = Long.parseLong(network.exists() ? network.get("last_login",  network.get("lastLogin",  "0")) : "0");
+            long lastLogout = Long.parseLong(network.exists() ? network.get("last_logout", network.get("lastLogout", "0")) : "0");
             boolean statusOn = lastLogin != 0;
             String coloredSession = "\u00a7cAPI";
             if (statusOn) {
@@ -1262,13 +1316,17 @@ public class OverlayManager {
             stats.put(SESSION_KEY,   coloredSession);
             stats.put(SESSION_VALUE, lastLogin * -1.0);
 
-            String wsPrefix  = parseWinstreakMode(LazifyConfig.INSTANCE.getWinstreakMode());
-            int    winstreak = Integer.parseInt(bw.get(wsPrefix + "winstreak", "0"));
-            boolean highWS   = winstreak > 50;
+            // Winstreak
+            String wsMode = parseWinstreakMode(LazifyConfig.INSTANCE.getWinstreakMode());
+            JsonWrapper wsSource = wsMode.isEmpty() ? overall : bw.object(wsMode);
+            if (!wsSource.exists()) wsSource = overall;
+            int winstreak = (int) Double.parseDouble(wsSource.get("winstreak", "0"));
+            boolean highWS = winstreak > 50;
             stats.put(WINSTREAK_KEY,   ColorUtil.getWinstreakColor(String.valueOf(winstreak)));
             stats.put(WINSTREAK_VALUE, (double) winstreak);
             stats.put(TAGS_KEY, "");
 
+            // Cache
             long CACHE = highWS ? 600000L
                     : Math.max(300, Math.min(86400, 60 * (60 * ((int) finalDeaths / 120)))) * 1000L;
             stats.put("cachetime", System.currentTimeMillis() + CACHE);
@@ -1281,33 +1339,27 @@ public class OverlayManager {
         return stats;
     }
 
-    private static double expToStars(int exp) {
-        // Exact port of original expToStars: one prestige = 487000 exp (100 stars)
-        int levelBase = (exp / 487000) * 100;
-        int expMod    = exp % 487000;
-        int[][] levels = {
-            {7000, 4, 5000},
-            {3500, 3, 3500},
-            {1500, 2, 2000},
-            {500,  1, 1000},
-            {0,    0,  500}
-        };
-        for (int[] lvl : levels) {
-            if (expMod < lvl[0]) continue;
-            return levelBase + lvl[1] + ((double)(expMod - lvl[0]) / lvl[2]);
-        }
-        return 0;
-    }
-
     private static String parseWinstreakMode(int i) {
         switch (i) {
-            case 1: return "eight_one_";
-            case 2: return "eight_two_";
-            case 3: return "four_three_";
-            case 4: return "four_four_";
-            case 5: return "two_four_";
+            case 1: return "solos";
+            case 2: return "doubles";
+            case 3: return "threes";
+            case 4: return "fours";
+            case 5: return "4v4";
             default: return "";
         }
+    }
+
+    private boolean isNickedKey(String uuid) {
+        return !isV4UndashedUuid(uuid);
+    }
+
+    private boolean isV4UndashedUuid(String uuid) {
+        return uuid != null && uuid.length() == 32 && uuid.charAt(12) == '4';
+    }
+
+    private boolean isV4DashedUuid(String uuid) {
+        return uuid != null && uuid.length() == 36 && uuid.charAt(14) == '4';
     }
 
     // ==========================================================================
@@ -1341,8 +1393,7 @@ public class OverlayManager {
 
                     if (!tagType.isEmpty()) {
                         debugFromThread("Urchin tag found for " + uuid + ": type=" + tagType + " reason=" + reason);
-                        Map<String, Object> op = overlayPlayers.get(uuid);
-                        String username = op != null ? (String) op.getOrDefault("username", uuid) : uuid;
+                        String username = uuidToName.getOrDefault(uuid, uuid);
 
                         String coloredTag = ColorUtil.getUrchinTagColor(tagType);
                         urchinCache.put(uuid, tagType);
@@ -1409,9 +1460,9 @@ public class OverlayManager {
 
     // All setting names (for tab complete)
     public static final String[] ALL_SETTINGS = {
-        "teams","teamprefix","showyourself","showranks","removefinalkill",
+        "teams","teamprefix","showyourself","showranks","removefinalkill","autotablist","clearonwho",
         "sendnicked","sendurchinreason","keybindhold","showontab","keybind",
-        "useprism","debug","col","sortby","sortmode","winstreak","enctimeout",
+        "debug","col","sortby","sortmode","winstreak","enctimeout",
         "x","y","bgopacity","bghue","headerhue","borderhue"
     };
     public static final String[] ALL_COLUMNS = {
@@ -1443,20 +1494,32 @@ public class OverlayManager {
                     if (uuid == null || uuid.isEmpty()) {
                         String[] conv2 = convertPlayerPlayerdb(scPlayer);
                         uuid = conv2[0]; username = conv2[1];
-                        if (uuid == null || uuid.isEmpty()) {
-                            printFromThread(PREFIX + "\u00a7eFailed to find \u00a73" + scPlayer); return;
-                        }
                     }
-                    final String fu = uuid, fn = username, fl = currentLobby;
-                    synchronized (currentPlayers) {
-                        overlayPlayers.remove(fu); currentPlayers.remove(fu);
-                        addPlaceholderStats(fu, fn, true); addToPlayers(fu);
-                        Map<String, Object> m = new ConcurrentHashMap<>(); m.put("manual", true);
-                        addToOverlay(fu, m);
-                        statsCache.remove(fu); urchinCache.remove(fu);
-                        new Thread(() -> handlePlayerStats(fu, fl)).start();
-                        new Thread(() -> handleUrchinTag(fu, fl)).start();
-                        printFromThread(PREFIX + "\u00a7eAdded \u00a73" + fn + "\u00a7e to overlay.");
+                    if (uuid == null || uuid.isEmpty()) {
+                        // Unresolvable name — add as nicked with N tag
+                        final String fu = "nick_" + scPlayer.toLowerCase(), fn = scPlayer;
+                        synchronized (currentPlayers) {
+                            addPlaceholderStats(fu, fn, true); addToPlayers(fu);
+                            Map<String, Object> m = new ConcurrentHashMap<>();
+                            m.put("nicked", true);
+                            m.put("apinicked", "\u00a7eN");
+                            m.put(URCHIN_KEY, "\u00a7bN");
+                            m.put("manual", true);
+                            addToOverlay(fu, m);
+                        }
+                        printFromThread(PREFIX + "\u00a7eAdded \u00a73" + fn + "\u00a7e as nicked.");
+                    } else {
+                        final String fu = uuid, fn = username.isEmpty() ? scPlayer : username, fl = currentLobby;
+                        synchronized (currentPlayers) {
+                            overlayPlayers.remove(fu); currentPlayers.remove(fu);
+                            addPlaceholderStats(fu, fn, true); addToPlayers(fu);
+                            Map<String, Object> m = new ConcurrentHashMap<>(); m.put("manual", true);
+                            addToOverlay(fu, m);
+                            statsCache.remove(fu); urchinCache.remove(fu);
+                            new Thread(() -> handlePlayerStats(fu, fl)).start();
+                            new Thread(() -> handleUrchinTag(fu, fl)).start();
+                            printFromThread(PREFIX + "\u00a7eAdded \u00a73" + fn + "\u00a7e to overlay.");
+                        }
                     }
                 }).start();
                 return;
@@ -1491,6 +1554,14 @@ public class OverlayManager {
                 print(PREFIX + "\u00a7eCleared \u00a73" + cnt + "\u00a7e player" + (cnt != 1 ? "s." : "."));
                 return;
 
+            case "tags":
+                print(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dOverlay Tags \u00a77\u2500\u2500\u2500");
+                print(PREFIX + "\u00a7eN \u00a77- Nicked (API returned no data)");
+                print(PREFIX + "\u00a7eS \u00a77- Sniper");
+                print(PREFIX + "\u00a7cC \u00a77- Confirmed Cheater");
+                print(PREFIX + "\u00a74CC \u00a77- Closet Cheater");
+                return;
+
             case "debugsb":
                 if (!LazifyConfig.INSTANCE.isDebug()) {
                     print(PREFIX + "\u00a7cEnable debug mode first: \u00a73/ov debug");
@@ -1512,16 +1583,13 @@ public class OverlayManager {
                 return;
 
             case "key":
-                if (args.length < 3) { print(PREFIX + "\u00a7eUsage: \u00a73/ov key <hypixel|urchin> <key>"); return; }
+                if (args.length < 3) { print(PREFIX + "\u00a7eUsage: \u00a73/ov key urchin <key>"); return; }
                 String keyType = args[1].toLowerCase();
-                if (keyType.equals("hypixel")) {
-                    LazifyConfig.INSTANCE.setHypixelKey(args[2]); LazifyConfig.INSTANCE.save();
-                    print(PREFIX + "\u00a7eHypixel API key saved.");
-                } else if (keyType.equals("urchin")) {
+                if (keyType.equals("urchin")) {
                     LazifyConfig.INSTANCE.setUrchinKey(args[2]); LazifyConfig.INSTANCE.save();
                     print(PREFIX + "\u00a7eUrchin API key saved.");
                 } else {
-                    print(PREFIX + "\u00a7eUnknown key type: \u00a73" + args[1] + "\u00a7e. Use \u00a73hypixel\u00a7e or \u00a73urchin\u00a7e.");
+                    print(PREFIX + "\u00a7eUnknown key type: \u00a73" + args[1] + "\u00a7e. Use \u00a73urchin\u00a7e.");
                 }
                 return;
         }
@@ -1545,6 +1613,10 @@ public class OverlayManager {
                     cfg.setShowRanks(args.length > 1 ? parseBool(args[1]) : !cfg.isShowRanks()); break;
                 case "removefinalkill":
                     cfg.setRemoveFinalKill(args.length > 1 ? parseBool(args[1]) : !cfg.isRemoveFinalKill()); break;
+                case "autotablist":
+                    cfg.setAutoTablist(args.length > 1 ? parseBool(args[1]) : !cfg.isAutoTablist()); break;
+                case "clearonwho":
+                    cfg.setClearOnWho(args.length > 1 ? parseBool(args[1]) : !cfg.isClearOnWho()); break;
                 case "sendnicked":
                     cfg.setSendNickedToChat(args.length > 1 ? parseBool(args[1]) : !cfg.isSendNickedToChat()); break;
                 case "sendurchinreason":
@@ -1553,12 +1625,6 @@ public class OverlayManager {
                     cfg.setKeybindHold(args.length > 1 ? parseBool(args[1]) : !cfg.isKeybindHold()); break;
                 case "showontab":
                     cfg.setShowOnTab(args.length > 1 ? parseBool(args[1]) : !cfg.isShowOnTab()); break;
-                case "useprism":
-                    cfg.setUsePrism(args.length > 1 ? parseBool(args[1]) : !cfg.isUsePrism());
-                    if (!cfg.isUsePrism() && cfg.getHypixelKey().isEmpty()) {
-                        print(PREFIX + "\u00a7cWarning: No Hypixel API key set. Use \u00a73/ov key hypixel <key>");
-                    }
-                    break;
                 case "debug":
                     cfg.setDebug(args.length > 1 ? parseBool(args[1]) : !cfg.isDebug()); break;
 
@@ -1664,7 +1730,8 @@ public class OverlayManager {
         print(PREFIX + "\u00a77clearhidden\u00a77 \u00a7e\u2013 show all hidden players again");
         print(PREFIX + "\u00a77reload\u00a77 \u00a7e\u2013 re-fetch stats for everyone");
         print(PREFIX + "\u00a77clear\u00a77 \u00a7e\u2013 remove all players from overlay");
-        print(PREFIX + "\u00a77key \u00a7e<hypixel|urchin> <key>\u00a77 \u00a7e\u2013 set API key");
+        print(PREFIX + "\u00a77key \u00a7e<urchin> <key>\u00a77 \u00a7e\u2013 set API key");
+        print(PREFIX + "\u00a77tags\u00a77 \u00a7e\u2013 show overlay tag definitions");
         if (LazifyConfig.INSTANCE.isDebug()) {
             print(PREFIX + "\u00a78debugsb\u00a77 \u00a7e\u2013 dump scoreboard data to chat");
             print(PREFIX + "\u00a78debugtab\u00a77 \u00a7e\u2013 dump tab list data to chat");
@@ -1685,6 +1752,8 @@ public class OverlayManager {
             + "\u00a77showranks \u00a7" + (c.isShowRanks() ? "a" : "c") + c.isShowRanks() + "  "
             + "\u00a77removefinalkill \u00a7" + (c.isRemoveFinalKill() ? "a" : "c") + c.isRemoveFinalKill());
         print(PREFIX
+            + "\u00a77autotablist \u00a7" + (c.isAutoTablist() ? "a" : "c") + c.isAutoTablist() + "  "
+            + "\u00a77clearonwho \u00a7" + (c.isClearOnWho() ? "a" : "c") + c.isClearOnWho() + "  "
             + "\u00a77sendnicked \u00a7" + (c.isSendNickedToChat() ? "a" : "c") + c.isSendNickedToChat() + "  "
             + "\u00a77sendurchinreason \u00a7" + (c.isSendUrchinReasonToChat() ? "a" : "c") + c.isSendUrchinReasonToChat() + "  "
             + "\u00a77debug \u00a7" + (c.isDebug() ? "a" : "c") + c.isDebug());
@@ -1709,8 +1778,6 @@ public class OverlayManager {
             + "\u00a77urchin \u00a7" + (c.isColUrchin() ? "a" : "c") + c.isColUrchin() + "  "
             + "\u00a77session \u00a7" + (c.isColSession() ? "a" : "c") + c.isColSession());
         print(PREFIX
-            + "\u00a77useprism \u00a7" + (c.isUsePrism() ? "a" : "c") + c.isUsePrism() + "\u00a77 (" + (c.isUsePrism() ? "Prism" : "Hypixel") + ")  "
-            + "\u00a77hypixel key: " + (c.getHypixelKey().isEmpty() ? "\u00a7cnot set" : "\u00a7aset") + "  "
             + "\u00a77urchin key: "  + (c.getUrchinKey().isEmpty()  ? "\u00a7cnot set" : "\u00a7aset") + "  "
             + "\u00a77overlay: " + (visible ? "\u00a7avisible" : "\u00a7chidden"));
     }
@@ -1769,11 +1836,12 @@ public class OverlayManager {
             case "showyourself":     return boolStr(c.isShowYourself());
             case "showranks":        return boolStr(c.isShowRanks());
             case "removefinalkill":  return boolStr(c.isRemoveFinalKill());
+            case "autotablist":      return boolStr(c.isAutoTablist());
+            case "clearonwho":       return boolStr(c.isClearOnWho());
             case "sendnicked":       return boolStr(c.isSendNickedToChat());
             case "sendurchinreason": return boolStr(c.isSendUrchinReasonToChat());
             case "keybindhold":      return boolStr(c.isKeybindHold());
             case "showontab":        return boolStr(c.isShowOnTab());
-            case "useprism":         return boolStr(c.isUsePrism());
             case "debug":            return boolStr(c.isDebug());
             case "keybind":          return "\u00a7e" + Keyboard.getKeyName(c.getKeybind()) + " (" + c.getKeybind() + ")";
             case "sortby":     return "\u00a7e" + c.getSortByIndex() + "\u00a7e (" + sortByName(c.getSortByIndex()) + ")";

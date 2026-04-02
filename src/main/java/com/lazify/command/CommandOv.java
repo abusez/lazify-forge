@@ -11,8 +11,8 @@ import java.util.List;
 
 public class CommandOv extends CommandBase {
 
-    private static final String[] CONTROL_CMDS = {"sc","hide","clearhidden","reload","clear","key","set"};
-    private static final String[] KEY_TYPES     = {"hypixel","urchin"};
+    private static final String[] CONTROL_CMDS = {"sc","hide","clearhidden","reload","clear","key","set","tags"};
+    private static final String[] KEY_TYPES     = {"urchin"};
     private static final String[] BOOL_VALS     = {"true","false"};
 
     @Override public String getCommandName()  { return "ov"; }

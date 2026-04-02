@@ -29,13 +29,28 @@ dependencies {
     // Gson is bundled with Minecraft/Forge
 }
 
+// Load local credentials (not in source control)
+def localProps = new Properties()
+def localFile = file('local.properties')
+if (localFile.exists()) {
+    localFile.withInputStream { localProps.load(it) }
+}
+
 processResources {
     inputs.property "version", project.version
+    inputs.property "api_url", localProps.getProperty('api.url', '')
+    inputs.property "api_key", localProps.getProperty('api.key', '')
     from(sourceSets.main.resources.srcDirs) {
         include 'mcmod.info'
         expand 'version': project.version
     }
     from(sourceSets.main.resources.srcDirs) {
+        include 'api.properties'
+        expand 'api_url': localProps.getProperty('api.url', ''),
+               'api_key': localProps.getProperty('api.key', '')
+    }
+    from(sourceSets.main.resources.srcDirs) {
         exclude 'mcmod.info'
+        exclude 'api.properties'
     }
 }
