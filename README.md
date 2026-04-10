@@ -10,6 +10,9 @@ A Minecraft Forge mod for **1.8.9** that displays a real-time HUD overlay showin
 - Hypixel rank display with proper formatting and colors
 - Team color coding
 - Prestige-based star colors (50+ prestige levels)
+- Skin-based nick detection — reveals nicked players' real names
+- Middle-click shop — instant buying in Bedwars shop GUIs
+- Auto-detect players from tab list or `/who`
 - Customizable columns, sorting, position, and colors
 - Toggle or hold-to-show keybind modes
 - Show overlay while holding Tab
@@ -20,7 +23,6 @@ A Minecraft Forge mod for **1.8.9** that displays a real-time HUD overlay showin
 - Minecraft 1.8.9
 - Minecraft Forge 11.15.1.2318
 - Java 8
-- Hypixel API key (optional, only if using Hypixel API instead of Prism)
 - Urchin API key (optional, for cheater tags)
 
 ## Building
@@ -41,7 +43,7 @@ The output JAR will be in `build/retromapping/retromappedReplacedMain.jar`.
 
 The config file is stored at `.minecraft/config/lazify.cfg`.
 
-By default, Lazify uses the Prism API for stats (no key needed). To use the Hypixel API instead, run `/ov useprism false` and set your key with `/ov key hypixel <your-key>`.
+Run `/ov 2` to view all settings grouped by category. Toggle any boolean setting with `/ov <setting>` or set a value with `/ov <setting> <value>`.
 
 Set your Urchin API key (optional): `/ov key urchin <your-key>`
 
@@ -51,19 +53,41 @@ All commands use the `/ov` prefix (aliases: `/overlay`, `/lazify`).
 
 | Command | Description |
 |---|---|
-| `/ov key <hypixel\|urchin> <key>` | Set an API key |
-| `/ov sc` | Sneak-click toggle |
+| `/ov` | Show command help |
+| `/ov 2` | Show all settings |
+| `/ov sc <player>` | Add a player to the overlay |
 | `/ov hide <player>` | Hide a player from the overlay |
 | `/ov clearhidden` | Clear the hidden players list |
-| `/ov col <column> <true/false>` | Toggle column visibility (encounters, username, star, fkdr, winstreaks, urchin, session) |
+| `/ov reload` | Re-fetch stats for all players |
+| `/ov clear` | Clear all players from overlay |
+| `/ov key urchin <key>` | Set your Urchin API key |
+| `/ov tags` | Show overlay tag definitions |
+| `/ov tag <player>` | Look up a player's full Urchin tags |
+| `/ov col <column>` | Toggle column visibility |
 | `/ov sortby <0-5>` | Sort by column (0=Encounters, 1=Star, 2=FKDR, 3=Index, 4=Winstreak, 5=JoinTime) |
 | `/ov sortmode <0/1>` | 0=ascending (highest on top), 1=descending |
 | `/ov winstreak <0-5>` | Winstreak mode (0=Overall, 1=Solos, 2=Doubles, 3=Threes, 4=Fours, 5=4v4) |
-| `/ov set <setting> <value>` | Change a boolean setting (teams, teamprefix, showyourself, sendnicked, sendurchinreason, showranks, removefinalkill, showontab, keybindhold, useprism, debug) |
-| `/ov color <bg/header/border> <0-360>` | Set hue for overlay colors |
-| `/ov opacity <0-255>` | Set background opacity |
-| `/ov reload` | Reload config from disk |
-| `/ov clear` | Clear cached player data |
+
+## Settings
+
+Toggle any boolean setting with `/ov <name>`, or set explicitly with `/ov <name> true/false`.
+
+| Setting | Default | Description |
+|---|---|---|
+| `teams` | on | Show team colors in overlay |
+| `teamprefix` | off | Show team prefix letters |
+| `showranks` | off | Show Hypixel rank next to name |
+| `showyourself` | off | Include yourself in the overlay |
+| `removefinalkill` | off | Remove players on final kill |
+| `autotablist` | on | Auto-detect players from tab list |
+| `clearonwho` | off | Clear overlay when `/who` is used |
+| `skindenick` | on | Detect nicked players by their skin |
+| `middleclickshop` | off | Convert clicks to middle-click in BW shops (shift-click still works normally) |
+| `sendnicked` | on | Print chat notice for nicked players |
+| `sendurchinreason` | off | Print Urchin tag reason to chat |
+| `keybindhold` | off | Hold key to show overlay instead of toggle |
+| `showontab` | on | Show overlay while holding Tab |
+| `debug` | off | Print debug messages to chat |
 
 ## Keybind
 
@@ -71,8 +95,8 @@ Default keybind is the grave/backtick key (`` ` ``). Change it with `/ov keybind
 
 Modes:
 - **Toggle** (default): press to show/hide
-- **Hold** (`/ov set keybindhold true`): overlay visible only while key is held
-- **Tab** (`/ov set showontab true`): overlay also shows while holding Tab
+- **Hold** (`/ov keybindhold`): overlay visible only while key is held
+- **Tab** (`/ov showontab`): overlay also shows while holding Tab
 
 ## Credits
 
