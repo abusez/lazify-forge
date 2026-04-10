@@ -31,6 +31,8 @@ public class LazifyConfig {
     private boolean removeFinalKill        = false;
     private boolean autoTablist            = true;
     private boolean clearOnWho             = false;
+    private boolean middleClickShop        = false;
+    private boolean skinDenick             = true;
 
     // column visibility
     private boolean colEncounters = true;
@@ -84,6 +86,8 @@ public class LazifyConfig {
         removeFinalKill        = config.getBoolean("removeFinalKill",        "general", false, "Remove players from overlay on final kill");
         autoTablist            = config.getBoolean("autoTablist",            "general", true,  "Auto-detect players from tab list");
         clearOnWho             = config.getBoolean("clearOnWho",             "general", false, "Clear overlay when /who response is received");
+        middleClickShop        = config.getBoolean("middleClickShop",        "general", false, "Convert left/right clicks to middle clicks in BW shops");
+        skinDenick             = config.getBoolean("skinDenick",             "general", true,  "Auto-detect nicked players by their skin");
 
         colEncounters = config.getBoolean("colEncounters", "columns", true, "Show Encounters column");
         colUsername   = config.getBoolean("colUsername",   "columns", true, "Show Username column");
@@ -123,6 +127,8 @@ public class LazifyConfig {
         config.get("general",  "removeFinalKill",        false).set(removeFinalKill);
         config.get("general",  "autoTablist",            true).set(autoTablist);
         config.get("general",  "clearOnWho",             false).set(clearOnWho);
+        config.get("general",  "middleClickShop",        false).set(middleClickShop);
+        config.get("general",  "skinDenick",             true).set(skinDenick);
         config.get("columns",  "colEncounters",          true).set(colEncounters);
         config.get("columns",  "colUsername",            true).set(colUsername);
         config.get("columns",  "colStar",                true).set(colStar);
@@ -158,6 +164,8 @@ public class LazifyConfig {
     public boolean isRemoveFinalKill()         { return removeFinalKill; }
     public boolean isAutoTablist()             { return autoTablist; }
     public boolean isClearOnWho()              { return clearOnWho; }
+    public boolean isMiddleClickShop()         { return middleClickShop; }
+    public boolean isSkinDenick()              { return skinDenick; }
     public boolean isColEncounters()           { return colEncounters; }
     public boolean isColUsername()             { return colUsername; }
     public boolean isColStar()                 { return colStar; }
@@ -191,6 +199,8 @@ public class LazifyConfig {
     public void setRemoveFinalKill(boolean v)      { removeFinalKill = v; }
     public void setAutoTablist(boolean v)          { autoTablist = v; }
     public void setClearOnWho(boolean v)           { clearOnWho = v; }
+    public void setMiddleClickShop(boolean v)      { middleClickShop = v; }
+    public void setSkinDenick(boolean v)           { skinDenick = v; }
     public void setColEncounters(boolean v)        { colEncounters = v; }
     public void setColUsername(boolean v)           { colUsername = v; }
     public void setColStar(boolean v)              { colStar = v; }

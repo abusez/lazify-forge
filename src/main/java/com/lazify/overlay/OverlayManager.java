@@ -6,6 +6,7 @@ import com.lazify.api.HttpUtil;
 import com.lazify.api.JsonWrapper;
 import com.lazify.config.LazifyConfig;
 import com.lazify.util.ColorUtil;
+import com.lazify.util.SkinDenick;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiChat;
 import net.minecraft.client.network.NetworkPlayerInfo;
@@ -92,6 +93,7 @@ public class OverlayManager {
     String  currentLobby = "";
     String  lastLobby    = "";
     int     status       = -1;
+    public boolean isInBedwars() { return status >= 1 || inBwPregame; }
     boolean ascending    = false;
     boolean showYourself    = false;
     boolean showTeamPrefix  = false;
@@ -310,14 +312,34 @@ public class OverlayManager {
             // Nick detection: UUID without dashes char[12] != '4' → nicked
             if (isNickedKey(uuid)) {
                 debug("Nick detected: " + username + " uuid=" + uuid);
-                placeholder.put("nicked", true);
-                placeholder.put(PLAYER_KEY, username);
-                overlayPlayers.put(uuid, placeholder);
-                sortOverlay();
-                if (LazifyConfig.INSTANCE.isSendNickedToChat()) {
-                    print(PREFIX + "\u00a7c" + username + " \u00a7eis nicked");
+
+                // Try skin denick
+                String realName = LazifyConfig.INSTANCE.isSkinDenick() ? SkinDenick.getRealName(pla) : null;
+                if (realName != null && !realName.isEmpty()) {
+                    debug("Skin denick: " + username + " -> " + realName);
+                    placeholder.put("nicked", true);
+                    placeholder.put(PLAYER_KEY, "\u00a7e" + username + " \u00a7d> \u00a7a" + realName);
+                    overlayPlayers.put(uuid, placeholder);
+                    addPlaceholderStats(uuid, realName, false);
+                    addToPlayers(uuid);
+                    if (LazifyConfig.INSTANCE.isSendNickedToChat()) {
+                        print(PREFIX + "\u00a7e" + username + " \u00a7dis nicked \u00a7d> \u00a7a" + realName);
+                    }
+                    // Fetch stats for real name
+                    uuidToName.put(uuid, realName);
+                    final String fUuid = uuid, fLobby = currentLobby;
+                    new Thread(() -> handlePlayerStats(fUuid, fLobby)).start();
+                    new Thread(() -> handleUrchinTag(fUuid, fLobby)).start();
+                } else {
+                    placeholder.put("nicked", true);
+                    placeholder.put(PLAYER_KEY, username);
+                    overlayPlayers.put(uuid, placeholder);
+                    sortOverlay();
+                    if (LazifyConfig.INSTANCE.isSendNickedToChat()) {
+                        print(PREFIX + "\u00a7c" + username + " \u00a7eis nicked");
+                    }
+                    addToPlayers(uuid);
                 }
-                addToPlayers(uuid);
                 continue;
             }
 
@@ -1405,8 +1427,9 @@ public class OverlayManager {
                         // addEnemy not available in vanilla Forge; skipped
 
                         if (LazifyConfig.INSTANCE.isSendUrchinReasonToChat() && !reason.isEmpty()) {
+                            String formattedType = ColorUtil.formatTagType(tagType);
                             printFromThread(PREFIX + "\u00a7c" + username
-                                    + " \u00a7eis tagged as \u00a73" + tagType + " \u00a7efor: \u00a73" + reason);
+                                    + " \u00a7eis tagged as \u00a73" + formattedType + " \u00a7efor: \u00a73" + reason);
                         }
                     }
                 }
@@ -1460,7 +1483,7 @@ public class OverlayManager {
 
     // All setting names (for tab complete)
     public static final String[] ALL_SETTINGS = {
-        "teams","teamprefix","showyourself","showranks","removefinalkill","autotablist","clearonwho",
+        "teams","teamprefix","showyourself","showranks","removefinalkill","autotablist","clearonwho","middleclickshop","skindenick",
         "sendnicked","sendurchinreason","keybindhold","showontab","keybind",
         "debug","col","sortby","sortmode","winstreak","enctimeout",
         "x","y","bgopacity","bghue","headerhue","borderhue"
@@ -1562,6 +1585,63 @@ public class OverlayManager {
                 print(PREFIX + "\u00a74CC \u00a77- Closet Cheater");
                 return;
 
+            case "tag":
+                if (args.length < 2) { print(PREFIX + "\u00a7eUsage: \u00a73/ov tag <username>"); return; }
+                if (urchinKey() == null || urchinKey().isEmpty()) {
+                    print(PREFIX + "\u00a7cNo Urchin key set. Use \u00a73/ov key urchin <key>"); return;
+                }
+                final String tagPlayer = args[1];
+                new Thread(() -> {
+                    // Try overlay first, then resolve via Mojang
+                    String uuid = null;
+                    for (Map.Entry<String, String> entry : uuidToName.entrySet()) {
+                        if (entry.getValue().equalsIgnoreCase(tagPlayer)) {
+                            uuid = entry.getKey(); break;
+                        }
+                    }
+                    if (uuid == null) {
+                        String[] conv = convertPlayer(tagPlayer);
+                        uuid = conv[0];
+                        if (uuid == null || uuid.isEmpty()) {
+                            String[] conv2 = convertPlayerPlayerdb(tagPlayer);
+                            uuid = conv2[0];
+                        }
+                    }
+                    if (uuid == null || uuid.isEmpty()) {
+                        printFromThread(PREFIX + "\u00a7cCould not resolve UUID for \u00a73" + tagPlayer + "\u00a7c.");
+                        return;
+                    }
+                    try {
+                        String url = "https://urchin.ws/player/" + uuid + "?key=" + urchinKey() + "&sources=GAME";
+                        Object[] res = HttpUtil.get(url, 3000);
+                        if ((int) res[1] == 200) {
+                            JsonWrapper json = (JsonWrapper) res[0];
+                            List<JsonWrapper> tagsArray = json.object().array("tags");
+                            if (tagsArray != null && !tagsArray.isEmpty()) {
+                                printFromThread(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dUrchin Tags: \u00a73" + tagPlayer + " \u00a77\u2500\u2500\u2500");
+                                for (JsonWrapper tag : tagsArray) {
+                                    String type = tag.object().get("type", "");
+                                    String reason = tag.object().get("reason", "");
+                                    String formatted = ColorUtil.formatTagType(type);
+                                    String color = type.contains("cheater") ? "\u00a7c" : "\u00a7e";
+                                    if (reason.isEmpty()) {
+                                        printFromThread(PREFIX + color + formatted);
+                                    } else {
+                                        printFromThread(PREFIX + color + formatted + " \u00a77- \u00a7f" + reason);
+                                    }
+                                }
+                            } else {
+                                printFromThread(PREFIX + "\u00a73" + tagPlayer + "\u00a7e has no Urchin tags.");
+                            }
+                        } else {
+                            printFromThread(PREFIX + "\u00a7cFailed to fetch Urchin tags for \u00a73" + tagPlayer + "\u00a7c.");
+                        }
+                    } catch (Exception e) {
+                        printFromThread(PREFIX + "\u00a7cError fetching Urchin tags for \u00a73" + tagPlayer + "\u00a7c.");
+                    }
+                }).start();
+                return;
+
             case "debugsb":
                 if (!LazifyConfig.INSTANCE.isDebug()) {
                     print(PREFIX + "\u00a7cEnable debug mode first: \u00a73/ov debug");
@@ -1617,6 +1697,10 @@ public class OverlayManager {
                     cfg.setAutoTablist(args.length > 1 ? parseBool(args[1]) : !cfg.isAutoTablist()); break;
                 case "clearonwho":
                     cfg.setClearOnWho(args.length > 1 ? parseBool(args[1]) : !cfg.isClearOnWho()); break;
+                case "middleclickshop":
+                    cfg.setMiddleClickShop(args.length > 1 ? parseBool(args[1]) : !cfg.isMiddleClickShop()); break;
+                case "skindenick":
+                    cfg.setSkinDenick(args.length > 1 ? parseBool(args[1]) : !cfg.isSkinDenick()); break;
                 case "sendnicked":
                     cfg.setSendNickedToChat(args.length > 1 ? parseBool(args[1]) : !cfg.isSendNickedToChat()); break;
                 case "sendurchinreason":
@@ -1732,6 +1816,7 @@ public class OverlayManager {
         print(PREFIX + "\u00a77clear\u00a77 \u00a7e\u2013 remove all players from overlay");
         print(PREFIX + "\u00a77key \u00a7e<urchin> <key>\u00a77 \u00a7e\u2013 set API key");
         print(PREFIX + "\u00a77tags\u00a77 \u00a7e\u2013 show overlay tag definitions");
+        print(PREFIX + "\u00a77tag \u00a7e<user>\u00a77 \u00a7e\u2013 show player's full Urchin tags");
         if (LazifyConfig.INSTANCE.isDebug()) {
             print(PREFIX + "\u00a78debugsb\u00a77 \u00a7e\u2013 dump scoreboard data to chat");
             print(PREFIX + "\u00a78debugtab\u00a77 \u00a7e\u2013 dump tab list data to chat");
@@ -1740,46 +1825,74 @@ public class OverlayManager {
 
     private void printStatus() {
         LazifyConfig c = LazifyConfig.INSTANCE;
-        print(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dLazify settings \u00a77\u2500\u2500\u2500  \u00a77/ov <setting> [value]  |  /ov for commands");
+        print(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dLazify Settings \u00a77\u2500\u2500\u2500  \u00a77/ov <setting> [value]");
+
+        // ── Keybind ──
+        print(PREFIX + "\u00a7d Keybind");
+        print(PREFIX + settingLine("keybind", Keyboard.getKeyName(c.getKeybind()))
+            + settingLine("keybindhold", c.isKeybindHold())
+            + settingLine("showontab", c.isShowOnTab()));
+
+        // ── Overlay ──
+        print(PREFIX + "\u00a7d Overlay");
+        print(PREFIX + settingLine("teams", c.isTeams())
+            + settingLine("teamprefix", c.isTeamPrefix())
+            + settingLine("showranks", c.isShowRanks())
+            + settingLine("showyourself", c.isShowYourself()));
+        print(PREFIX + settingLine("removefinalkill", c.isRemoveFinalKill())
+            + settingLine("autotablist", c.isAutoTablist())
+            + settingLine("clearonwho", c.isClearOnWho()));
+
+        // ── Features ──
+        print(PREFIX + "\u00a7d Features");
+        print(PREFIX + settingLine("skindenick", c.isSkinDenick())
+            + settingLine("middleclickshop", c.isMiddleClickShop()));
+
+        // ── Chat ──
+        print(PREFIX + "\u00a7d Chat");
+        print(PREFIX + settingLine("sendnicked", c.isSendNickedToChat())
+            + settingLine("sendurchinreason", c.isSendUrchinReasonToChat()));
+
+        // ── Sorting ──
+        print(PREFIX + "\u00a7d Sorting");
+        print(PREFIX + settingLine("sortby", c.getSortByIndex() + " \u00a77(" + sortByName(c.getSortByIndex()) + ")")
+            + settingLine("sortmode", c.getSortMode() + " \u00a77(" + (c.getSortMode() == 0 ? "asc" : "desc") + ")")
+            + settingLine("winstreak", c.getWinstreakMode() + " \u00a77(" + winstreakName(c.getWinstreakMode()) + ")"));
+        print(PREFIX + settingLine("enctimeout", c.getEncountersTimeoutMins() + "m"));
+
+        // ── Appearance ──
+        print(PREFIX + "\u00a7d Appearance");
+        print(PREFIX + settingLine("x", String.valueOf(c.getOverlayX()))
+            + settingLine("y", String.valueOf(c.getOverlayY()))
+            + settingLine("bgopacity", String.valueOf(c.getBgOpacity())));
+        print(PREFIX + settingLine("bghue", String.valueOf(c.getBgHue()))
+            + settingLine("headerhue", String.valueOf(c.getHeaderHue()))
+            + settingLine("borderhue", String.valueOf(c.getBorderHue())));
+
+        // ── Columns ──
+        print(PREFIX + "\u00a7d Columns \u00a77(/ov col <name>)");
         print(PREFIX
-            + "\u00a77keybind \u00a7e" + Keyboard.getKeyName(c.getKeybind()) + "  "
-            + "\u00a77keybindhold \u00a7" + (c.isKeybindHold() ? "a" : "c") + c.isKeybindHold() + "  "
-            + "\u00a77showontab \u00a7" + (c.isShowOnTab() ? "a" : "c") + c.isShowOnTab());
-        print(PREFIX
-            + "\u00a77teams \u00a7" + (c.isTeams() ? "a" : "c") + c.isTeams() + "  "
-            + "\u00a77teamprefix \u00a7" + (c.isTeamPrefix() ? "a" : "c") + c.isTeamPrefix() + "  "
-            + "\u00a77showyourself \u00a7" + (c.isShowYourself() ? "a" : "c") + c.isShowYourself() + "  "
-            + "\u00a77showranks \u00a7" + (c.isShowRanks() ? "a" : "c") + c.isShowRanks() + "  "
-            + "\u00a77removefinalkill \u00a7" + (c.isRemoveFinalKill() ? "a" : "c") + c.isRemoveFinalKill());
-        print(PREFIX
-            + "\u00a77autotablist \u00a7" + (c.isAutoTablist() ? "a" : "c") + c.isAutoTablist() + "  "
-            + "\u00a77clearonwho \u00a7" + (c.isClearOnWho() ? "a" : "c") + c.isClearOnWho() + "  "
-            + "\u00a77sendnicked \u00a7" + (c.isSendNickedToChat() ? "a" : "c") + c.isSendNickedToChat() + "  "
-            + "\u00a77sendurchinreason \u00a7" + (c.isSendUrchinReasonToChat() ? "a" : "c") + c.isSendUrchinReasonToChat() + "  "
-            + "\u00a77debug \u00a7" + (c.isDebug() ? "a" : "c") + c.isDebug());
-        print(PREFIX
-            + "\u00a77sortby \u00a7e" + c.getSortByIndex() + "\u00a77(" + sortByName(c.getSortByIndex()) + ")  "
-            + "\u00a77sortmode \u00a7e" + c.getSortMode() + "\u00a77(" + (c.getSortMode() == 0 ? "asc" : "desc") + ")  "
-            + "\u00a77winstreak \u00a7e" + c.getWinstreakMode() + "\u00a77(" + winstreakName(c.getWinstreakMode()) + ")  "
-            + "\u00a77enctimeout \u00a7e" + c.getEncountersTimeoutMins() + "\u00a77m");
-        print(PREFIX
-            + "\u00a77x \u00a7e" + c.getOverlayX() + "  "
-            + "\u00a77y \u00a7e" + c.getOverlayY() + "  "
-            + "\u00a77bgopacity \u00a7e" + c.getBgOpacity() + "  "
-            + "\u00a77bghue \u00a7e" + c.getBgHue() + "  "
-            + "\u00a77headerhue \u00a7e" + c.getHeaderHue() + "  "
-            + "\u00a77borderhue \u00a7e" + c.getBorderHue());
-        print(PREFIX
-            + "\u00a77col encounters \u00a7" + (c.isColEncounters() ? "a" : "c") + c.isColEncounters() + "  "
-            + "\u00a77username \u00a7" + (c.isColUsername() ? "a" : "c") + c.isColUsername() + "  "
-            + "\u00a77star \u00a7" + (c.isColStar() ? "a" : "c") + c.isColStar() + "  "
-            + "\u00a77fkdr \u00a7" + (c.isColFkdr() ? "a" : "c") + c.isColFkdr() + "  "
-            + "\u00a77winstreaks \u00a7" + (c.isColWinstreaks() ? "a" : "c") + c.isColWinstreaks() + "  "
-            + "\u00a77urchin \u00a7" + (c.isColUrchin() ? "a" : "c") + c.isColUrchin() + "  "
-            + "\u00a77session \u00a7" + (c.isColSession() ? "a" : "c") + c.isColSession());
-        print(PREFIX
-            + "\u00a77urchin key: "  + (c.getUrchinKey().isEmpty()  ? "\u00a7cnot set" : "\u00a7aset") + "  "
-            + "\u00a77overlay: " + (visible ? "\u00a7avisible" : "\u00a7chidden"));
+            + colLine("encounters", c.isColEncounters()) + colLine("username", c.isColUsername())
+            + colLine("star", c.isColStar()) + colLine("fkdr", c.isColFkdr())
+            + colLine("winstreaks", c.isColWinstreaks()) + colLine("urchin", c.isColUrchin())
+            + colLine("session", c.isColSession()));
+
+        // ── Status ──
+        print(PREFIX + "\u00a77urchin key: " + (c.getUrchinKey().isEmpty() ? "\u00a7cnot set" : "\u00a7aset") + "  "
+            + "\u00a77overlay: " + (visible ? "\u00a7avisible" : "\u00a7chidden") + "  "
+            + "\u00a77debug: \u00a7" + (c.isDebug() ? "a" : "c") + c.isDebug());
+    }
+
+    private static String settingLine(String name, boolean val) {
+        return " \u00a77" + name + " \u00a7" + (val ? "a" : "c") + val + " ";
+    }
+
+    private static String settingLine(String name, String val) {
+        return " \u00a77" + name + " \u00a7e" + val + " ";
+    }
+
+    private static String colLine(String name, boolean val) {
+        return " \u00a7" + (val ? "a" : "c") + name + " ";
     }
 
     private void printColStatus() {
@@ -1838,6 +1951,8 @@ public class OverlayManager {
             case "removefinalkill":  return boolStr(c.isRemoveFinalKill());
             case "autotablist":      return boolStr(c.isAutoTablist());
             case "clearonwho":       return boolStr(c.isClearOnWho());
+            case "middleclickshop": return boolStr(c.isMiddleClickShop());
+            case "skindenick":      return boolStr(c.isSkinDenick());
             case "sendnicked":       return boolStr(c.isSendNickedToChat());
             case "sendurchinreason": return boolStr(c.isSendUrchinReasonToChat());
             case "keybindhold":      return boolStr(c.isKeybindHold());

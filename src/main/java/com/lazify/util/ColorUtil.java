@@ -167,6 +167,21 @@ public class ColorUtil {
         }
     }
 
+    /**
+     * Formats a raw urchin tag type like "confirmed_cheater" into "Confirmed Cheater".
+     */
+    public static String formatTagType(String tagType) {
+        if (tagType == null || tagType.isEmpty()) return tagType;
+        String[] words = tagType.split("_");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < words.length; i++) {
+            if (i > 0) sb.append(' ');
+            sb.append(Character.toUpperCase(words[i].charAt(0)));
+            sb.append(words[i].substring(1).toLowerCase());
+        }
+        return sb.toString();
+    }
+
     // ── Rank helpers (take full Hypixel API response JsonWrapper) ───────────────
 
     public static String getRank(com.lazify.api.JsonWrapper playerData) {
