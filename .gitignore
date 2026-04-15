@@ -7,6 +7,11 @@ out/
 CLAUDE.md
 changelog.md
 AGENTS.md
+.agents/
+skills/
+image.png
+instructions.md
+skills-lock.json
 
 # Eclipse
 .classpath

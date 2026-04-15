@@ -95,18 +95,21 @@ public class ColorUtil {
 
     // ── FKDR color: exact original thresholds ──────────────────────────────────
 
-    public static String getFkdrColor(String fkdr) {
+    /**
+     * @param colors 7 color codes: [0]=&lt;1.4, [1]=1.4-2.4, [2]=2.4-5, [3]=5-10, [4]=10-100, [5]=100-1000, [6]=1000+
+     */
+    public static String getFkdrColor(String fkdr, String[] colors) {
         try {
             double v = Double.parseDouble(fkdr);
-            if (v > 1000) return "\u00a75" + fkdr;
-            if (v > 100)  return "\u00a74" + fkdr;
-            if (v > 10)   return "\u00a7c" + fkdr;
-            if (v > 5)    return "\u00a76" + fkdr;
-            if (v > 2.4)  return "\u00a7e" + fkdr;
-            if (v > 1.4)  return "\u00a7f" + fkdr;
-            return "\u00a77" + fkdr;
+            if (v > 1000) return "\u00a7" + colors[6] + fkdr;
+            if (v > 100)  return "\u00a7" + colors[5] + fkdr;
+            if (v > 10)   return "\u00a7" + colors[4] + fkdr;
+            if (v > 5)    return "\u00a7" + colors[3] + fkdr;
+            if (v > 2.4)  return "\u00a7" + colors[2] + fkdr;
+            if (v > 1.4)  return "\u00a7" + colors[1] + fkdr;
+            return "\u00a7" + colors[0] + fkdr;
         } catch (NumberFormatException e) {
-            return "\u00a77" + fkdr;
+            return "\u00a7" + colors[0] + fkdr;
         }
     }
 

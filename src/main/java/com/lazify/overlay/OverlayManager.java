@@ -103,6 +103,13 @@ public class OverlayManager {
     boolean dowho        = true;
     boolean didwho       = false;
     boolean inBwPregame  = false;
+    boolean dodgeWarned  = false;
+
+    // ── Party tracking ────────────────────────────────────────────────────────
+    private final Set<String> partyMembers = Collections.synchronizedSet(new HashSet<String>());
+    private boolean parsingPartyList = false;
+    private boolean partySent = false;
+
 
     // ── Overlay layout ─────────────────────────────────────────────────────────
     int   startX = 500, startY = 12, offsetY = 3;
@@ -236,12 +243,35 @@ public class OverlayManager {
 
         doColumns(true);
 
+        // Auto /who: send /who once when the game starts (status becomes 3 / ingame)
+        // Handled in updateStatus() on status transition to 3
+
+        // Send /pl once per lobby to detect party members for dodge warning
+        if (!partySent && (status >= 1 || inBwPregame)) {
+            partySent = true;
+            new Thread(() -> {
+                try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
+                pendingCommands.add("/pl");
+                debugFromThread("Auto /pl triggered for party detection");
+            }).start();
+        }
+
         if (status < 1 && !inBwPregame) return;
         if (!LazifyConfig.INSTANCE.isAutoTablist()) return;
 
         Set<String> currentEntityUUIDs = new HashSet<>();
         long currentTime = System.currentTimeMillis();
         int threshold = LazifyConfig.INSTANCE.getEncountersTimeoutMins() * 60000;
+
+        // Pre-pass: group tab entries by username to detect duplicate-name nicks
+        Map<String, List<String>> nameToUuids = new HashMap<>();
+        for (NetworkPlayerInfo info : mc.getNetHandler().getPlayerInfoMap()) {
+            String name = info.getGameProfile().getName().toLowerCase();
+            String uid = info.getGameProfile().getId().toString().replace("-", "");
+            List<String> list = nameToUuids.get(name);
+            if (list == null) { list = new ArrayList<>(); nameToUuids.put(name, list); }
+            list.add(uid);
+        }
 
         for (NetworkPlayerInfo pla : mc.getNetHandler().getPlayerInfoMap()) {
             String uuidWithDashes = pla.getGameProfile().getId().toString();
@@ -312,33 +342,71 @@ public class OverlayManager {
             // Nick detection: UUID without dashes char[12] != '4' → nicked
             if (isNickedKey(uuid)) {
                 debug("Nick detected: " + username + " uuid=" + uuid);
+                placeholder.put("nicked", true);
 
-                // Try skin denick
-                String realName = LazifyConfig.INSTANCE.isSkinDenick() ? SkinDenick.getRealName(pla) : null;
-                if (realName != null && !realName.isEmpty()) {
-                    debug("Skin denick: " + username + " -> " + realName);
-                    placeholder.put("nicked", true);
-                    placeholder.put(PLAYER_KEY, "\u00a7e" + username + " \u00a7d> \u00a7a" + realName);
-                    overlayPlayers.put(uuid, placeholder);
-                    addPlaceholderStats(uuid, realName, false);
-                    addToPlayers(uuid);
-                    if (LazifyConfig.INSTANCE.isSendNickedToChat()) {
-                        print(PREFIX + "\u00a7e" + username + " \u00a7dis nicked \u00a7d> \u00a7a" + realName);
+                // Check if this nick appears twice in tab list (Hypixel leaks the real UUID)
+                List<String> sameNameUuids = nameToUuids.get(username.toLowerCase());
+                String leakedUuid = null;
+                if (sameNameUuids != null && sameNameUuids.size() > 1) {
+                    for (String u : sameNameUuids) {
+                        if (isV4UndashedUuid(u) && !u.equals(uuid)) {
+                            leakedUuid = u; break;
+                        }
                     }
-                    // Fetch stats for real name
-                    uuidToName.put(uuid, realName);
-                    final String fUuid = uuid, fLobby = currentLobby;
-                    new Thread(() -> handlePlayerStats(fUuid, fLobby)).start();
-                    new Thread(() -> handleUrchinTag(fUuid, fLobby)).start();
-                } else {
-                    placeholder.put("nicked", true);
+                }
+
+                if (leakedUuid != null) {
+                    // Tab denick: resolve real name from leaked UUID via session server
                     placeholder.put(PLAYER_KEY, username);
                     overlayPlayers.put(uuid, placeholder);
                     sortOverlay();
-                    if (LazifyConfig.INSTANCE.isSendNickedToChat()) {
-                        print(PREFIX + "\u00a7c" + username + " \u00a7eis nicked");
-                    }
                     addToPlayers(uuid);
+                    final String fLeaked = leakedUuid, fNickUuid = uuid;
+                    final String fNickName = username, fLobby = currentLobby;
+                    debug("Tab denick: duplicate name for " + username + ", leaked uuid=" + leakedUuid);
+                    new Thread(() -> {
+                        String[] conv = convertPlayer(fLeaked);
+                        String resolvedName = (conv[1] != null && !conv[1].isEmpty()) ? conv[1] : null;
+                        if (resolvedName != null) {
+                            debugFromThread("Tab denick: " + fNickName + " -> " + resolvedName);
+                            if (isInOverlay(fNickUuid) && currentLobby.equals(fLobby)) {
+                                Map<String, Object> denickData = new ConcurrentHashMap<>();
+                                denickData.put(PLAYER_KEY, "\u00a7e" + fNickName + " \u00a7d> \u00a7a" + resolvedName);
+                                addToOverlay(fNickUuid, denickData);
+                                uuidToName.put(fNickUuid, resolvedName);
+                                handlePlayerStats(fNickUuid, fLobby);
+                                handleUrchinTag(fNickUuid, fLobby);
+                            }
+                            if (LazifyConfig.INSTANCE.isSendNickedToChat()) {
+                                printFromThread(PREFIX + "\u00a7e" + fNickName + " \u00a7dis nicked \u00a7d> \u00a7a" + resolvedName);
+                            }
+                        }
+                    }).start();
+                } else {
+                    // Skin denick: match skin texture against known players
+                    String realName = LazifyConfig.INSTANCE.isSkinDenick() ? SkinDenick.getRealName(pla) : null;
+                    if (realName != null && !realName.isEmpty()) {
+                        debug("Skin denick: " + username + " -> " + realName);
+                        placeholder.put(PLAYER_KEY, "\u00a7e" + username + " \u00a7d> \u00a7a" + realName);
+                        overlayPlayers.put(uuid, placeholder);
+                        addPlaceholderStats(uuid, realName, false);
+                        addToPlayers(uuid);
+                        if (LazifyConfig.INSTANCE.isSendNickedToChat()) {
+                            print(PREFIX + "\u00a7e" + username + " \u00a7dis nicked \u00a7d> \u00a7a" + realName);
+                        }
+                        uuidToName.put(uuid, realName);
+                        final String fUuid = uuid, fLobby = currentLobby;
+                        new Thread(() -> handlePlayerStats(fUuid, fLobby)).start();
+                        new Thread(() -> handleUrchinTag(fUuid, fLobby)).start();
+                    } else {
+                        placeholder.put(PLAYER_KEY, username);
+                        overlayPlayers.put(uuid, placeholder);
+                        sortOverlay();
+                        if (LazifyConfig.INSTANCE.isSendNickedToChat()) {
+                            print(PREFIX + "\u00a7c" + username + " \u00a7eis nicked");
+                        }
+                        addToPlayers(uuid);
+                    }
                 }
                 continue;
             }
@@ -396,6 +464,19 @@ public class OverlayManager {
         status = getBedwarsStatus();
         if (status != oldStatus) {
             debug("Status changed: " + oldStatus + " -> " + status + " | lobby=" + currentLobby + " inBwPregame=" + inBwPregame);
+
+            // Auto /who: fire once when game starts (transition to ingame status 3)
+            if (status == 3 && LazifyConfig.INSTANCE.isAutoWho() && dowho) {
+                dowho = false;
+                long whoDelayMs = (long) (LazifyConfig.INSTANCE.getWhoDelay() * 1000);
+                new Thread(() -> {
+                    if (whoDelayMs > 0) {
+                        try { Thread.sleep(whoDelayMs); } catch (InterruptedException ignored) {}
+                    }
+                    pendingCommands.add("/who");
+                    debugFromThread("Auto /who triggered on game start (delay " + whoDelayMs + "ms)");
+                }).start();
+            }
         }
         if (!lastLobby.equals(currentLobby)) {
             debug("Lobby changed: " + lastLobby + " -> " + currentLobby);
@@ -678,8 +759,65 @@ public class OverlayManager {
             overlayPlayers.put(uuid, existing);
             doColumns(false);
             sortOverlay();
+            checkDodgeWarning();
         } catch (Exception e) {
             print(PREFIX + "\u00a7eError detected. Please check \u00a73latest.log\u00a7e.");
+        }
+    }
+
+    private void checkDodgeWarning() {
+        if (dodgeWarned || !LazifyConfig.INSTANCE.isDodgeWarning()) return;
+        if (status < 1 && !inBwPregame) return;
+
+        // Build set of UUIDs to exclude (self + party members)
+        Set<String> excluded = new HashSet<>(partyMembers);
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer != null) {
+            excluded.add(mc.thePlayer.getGameProfile().getId().toString().replace("-", ""));
+        }
+
+        double total = 0; int count = 0;
+        for (Map.Entry<String, Map<String, Object>> entry : overlayPlayers.entrySet()) {
+            if (excluded.contains(entry.getKey())) continue;
+            Object fv = entry.getValue().get(FKDR_VALUE);
+            if (fv instanceof Double) {
+                total += (Double) fv;
+                count++;
+            }
+        }
+        if (count < 2) return;
+
+        double avg = total / count;
+        double threshold = LazifyConfig.INSTANCE.getDodgeThreshold();
+        if (avg >= threshold) {
+            dodgeWarned = true;
+            String avgStr = ColorUtil.formatDoubleStr(ColorUtil.round(avg, 2));
+            printFromThread(PREFIX + "\u00a7c\u26a0 Lobby dodge warning! \u00a7eAvg FKDR: \u00a7c" + avgStr
+                + " \u00a7e(threshold: \u00a73" + ColorUtil.formatDoubleStr(threshold) + "\u00a7e)");
+        }
+    }
+
+    private void parsePartyLine(String line) {
+        // Format: "Party Leader: [RANK] Name ●" or "Party Members: [RANK] Name ● [RANK] Name2 ●"
+        int colon = line.indexOf(':');
+        if (colon < 0) return;
+        String rest = line.substring(colon + 1).trim();
+        // Split on ● to get each player segment
+        String[] parts = rest.split("\u25cf|\\[.*?\\]");
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.getNetHandler() == null) return;
+        for (String part : parts) {
+            String name = part.trim();
+            if (name.isEmpty()) continue;
+            // Look up UUID from tab list
+            for (NetworkPlayerInfo npi : mc.getNetHandler().getPlayerInfoMap()) {
+                if (npi.getGameProfile().getName().equalsIgnoreCase(name)) {
+                    String uuid = npi.getGameProfile().getId().toString().replace("-", "");
+                    partyMembers.add(uuid);
+                    debug("Party member: " + name + " (" + uuid + ")");
+                    break;
+                }
+            }
         }
     }
 
@@ -894,6 +1032,24 @@ public class OverlayManager {
             debug("Game start detected (Protect your bed) | lobby=" + currentLobby + " status=" + status);
         }
 
+        // ── Party list parsing (/pl response) ─────────────────────────────────
+        if (msg.equals("You are not currently in a party.")) {
+            partyMembers.clear();
+            parsingPartyList = false;
+            debug("No party detected");
+        }
+        if (msg.startsWith("Party Leader:") || msg.startsWith("Party Members") || msg.startsWith("Party Moderators")) {
+            if (msg.startsWith("Party Leader:")) {
+                partyMembers.clear();
+                debug("Parsing party list...");
+            }
+            parsingPartyList = true;
+            parsePartyLine(msg);
+        } else if (parsingPartyList && msg.startsWith("-----")) {
+            parsingPartyList = false;
+            debug("Party members: " + partyMembers.size() + " found");
+        }
+
         // Auto-trigger /who when someone joins (only needed for join-time sorting)
         if (sortBy.equals(JOIN_VALUE) && dowho
                 && ((msg.endsWith("!") && msg.contains("has joined"))
@@ -996,7 +1152,7 @@ public class OverlayManager {
             }
 
             if (!didwho) { didwho = true; }
-            return false; // suppress ONLINE: line from chat
+            return !LazifyConfig.INSTANCE.isHideWho();
         }
 
         // Remove players from overlay on final kill
@@ -1197,6 +1353,9 @@ public class OverlayManager {
         dowho = true;
         didwho = false;
         inBwPregame = false;
+        dodgeWarned = false;
+        partySent = false;
+        parsingPartyList = false;
         overlayTicks = 0;
         clearMaps();
     }
@@ -1317,7 +1476,10 @@ public class OverlayManager {
             if (fkdr == 0 && finalDeaths > 0) fkdr = finalKills / finalDeaths;
             fkdr = fkdr < 10 ? ColorUtil.round(fkdr, 2) : ColorUtil.round(fkdr, 1);
             double index = star * Math.pow(fkdr, 2);
-            stats.put(FKDR_KEY,   ColorUtil.getFkdrColor(ColorUtil.formatDoubleStr(fkdr)));
+            String fkdrStr = ColorUtil.formatDoubleStr(fkdr);
+            stats.put(FKDR_KEY,   LazifyConfig.INSTANCE.isFkdrColors()
+                    ? ColorUtil.getFkdrColor(fkdrStr, LazifyConfig.INSTANCE.getFkdrColors())
+                    : "\u00a7f" + fkdrStr);
             stats.put(FKDR_VALUE, fkdr);
             stats.put(INDEX_VALUE, index);
 
@@ -1484,6 +1646,7 @@ public class OverlayManager {
     // All setting names (for tab complete)
     public static final String[] ALL_SETTINGS = {
         "teams","teamprefix","showyourself","showranks","removefinalkill","autotablist","clearonwho","middleclickshop","skindenick",
+        "fkdrcolors","autowho","whodelay","hidewho","dodgewarning","dodgethreshold","nohurtcam","antidebuff",
         "sendnicked","sendurchinreason","keybindhold","showontab","keybind",
         "debug","col","sortby","sortmode","winstreak","enctimeout",
         "x","y","bgopacity","bghue","headerhue","borderhue"
@@ -1672,6 +1835,10 @@ public class OverlayManager {
                     print(PREFIX + "\u00a7eUnknown key type: \u00a73" + args[1] + "\u00a7e. Use \u00a73urchin\u00a7e.");
                 }
                 return;
+
+            case "fkdrcolor":
+                handleFkdrColor(args);
+                return;
         }
 
         // All remaining tokens are settings
@@ -1701,6 +1868,18 @@ public class OverlayManager {
                     cfg.setMiddleClickShop(args.length > 1 ? parseBool(args[1]) : !cfg.isMiddleClickShop()); break;
                 case "skindenick":
                     cfg.setSkinDenick(args.length > 1 ? parseBool(args[1]) : !cfg.isSkinDenick()); break;
+                case "fkdrcolors":
+                    cfg.setFkdrColors(args.length > 1 ? parseBool(args[1]) : !cfg.isFkdrColors()); break;
+                case "autowho":
+                    cfg.setAutoWho(args.length > 1 ? parseBool(args[1]) : !cfg.isAutoWho()); break;
+                case "hidewho":
+                    cfg.setHideWho(args.length > 1 ? parseBool(args[1]) : !cfg.isHideWho()); break;
+                case "dodgewarning":
+                    cfg.setDodgeWarning(args.length > 1 ? parseBool(args[1]) : !cfg.isDodgeWarning()); break;
+                case "nohurtcam":
+                    cfg.setNoHurtCam(args.length > 1 ? parseBool(args[1]) : !cfg.isNoHurtCam()); break;
+                case "antidebuff":
+                    cfg.setAntiDebuff(args.length > 1 ? parseBool(args[1]) : !cfg.isAntiDebuff()); break;
                 case "sendnicked":
                     cfg.setSendNickedToChat(args.length > 1 ? parseBool(args[1]) : !cfg.isSendNickedToChat()); break;
                 case "sendurchinreason":
@@ -1725,6 +1904,12 @@ public class OverlayManager {
                 case "enctimeout":
                     if (args.length < 2) { print(PREFIX + "\u00a7eenctimeout: \u00a73" + cfg.getEncountersTimeoutMins() + " \u00a7emins (1-1440)"); return; }
                     cfg.setEncountersTimeoutMins(clamp(Integer.parseInt(args[1]), 1, 1440)); break;
+                case "whodelay":
+                    if (args.length < 2) { print(PREFIX + "\u00a7ewhodelay: \u00a73" + cfg.getWhoDelay() + "s \u00a7e(0-10)"); return; }
+                    cfg.setWhoDelay(Math.max(0, Math.min(10, Double.parseDouble(args[1])))); break;
+                case "dodgethreshold":
+                    if (args.length < 2) { print(PREFIX + "\u00a7edodgethreshold: \u00a73" + cfg.getDodgeThreshold()); return; }
+                    cfg.setDodgeThreshold(Math.max(0.1, Double.parseDouble(args[1]))); break;
                 case "x":
                     if (args.length < 2) { print(PREFIX + "\u00a7ex: \u00a73" + cfg.getOverlayX()); return; }
                     cfg.setOverlayX(Math.max(0, Integer.parseInt(args[1]))); break;
@@ -1817,6 +2002,7 @@ public class OverlayManager {
         print(PREFIX + "\u00a77key \u00a7e<urchin> <key>\u00a77 \u00a7e\u2013 set API key");
         print(PREFIX + "\u00a77tags\u00a77 \u00a7e\u2013 show overlay tag definitions");
         print(PREFIX + "\u00a77tag \u00a7e<user>\u00a77 \u00a7e\u2013 show player's full Urchin tags");
+        print(PREFIX + "\u00a77fkdrcolor \u00a7e<1-7> <0-f>\u00a77 \u00a7e\u2013 set FKDR tier color");
         if (LazifyConfig.INSTANCE.isDebug()) {
             print(PREFIX + "\u00a78debugsb\u00a77 \u00a7e\u2013 dump scoreboard data to chat");
             print(PREFIX + "\u00a78debugtab\u00a77 \u00a7e\u2013 dump tab list data to chat");
@@ -1846,7 +2032,15 @@ public class OverlayManager {
         // ── Features ──
         print(PREFIX + "\u00a7d Features");
         print(PREFIX + settingLine("skindenick", c.isSkinDenick())
-            + settingLine("middleclickshop", c.isMiddleClickShop()));
+            + settingLine("middleclickshop", c.isMiddleClickShop())
+            + settingLine("fkdrcolors", c.isFkdrColors()));
+        print(PREFIX + settingLine("autowho", c.isAutoWho())
+            + settingLine("whodelay", c.getWhoDelay() + "s")
+            + settingLine("hidewho", c.isHideWho())
+            + settingLine("dodgewarning", c.isDodgeWarning())
+            + settingLine("dodgethreshold", String.valueOf(c.getDodgeThreshold())));
+        print(PREFIX + settingLine("nohurtcam", c.isNoHurtCam())
+            + settingLine("antidebuff", c.isAntiDebuff()));
 
         // ── Chat ──
         print(PREFIX + "\u00a7d Chat");
@@ -1868,6 +2062,10 @@ public class OverlayManager {
         print(PREFIX + settingLine("bghue", String.valueOf(c.getBgHue()))
             + settingLine("headerhue", String.valueOf(c.getHeaderHue()))
             + settingLine("borderhue", String.valueOf(c.getBorderHue())));
+        String[] fc = c.getFkdrColors();
+        StringBuilder fcLine = new StringBuilder(" \u00a77fkdrcolor ");
+        for (int i = 0; i < 7; i++) fcLine.append("\u00a7").append(fc[i]).append("\u2588");
+        print(PREFIX + fcLine.toString() + " \u00a77(/ov fkdrcolor)");
 
         // ── Columns ──
         print(PREFIX + "\u00a7d Columns \u00a77(/ov col <name>)");
@@ -1893,6 +2091,47 @@ public class OverlayManager {
 
     private static String colLine(String name, boolean val) {
         return " \u00a7" + (val ? "a" : "c") + name + " ";
+    }
+
+    private static final String VALID_COLOR_CODES = "0123456789abcdef";
+    private static final String[] FKDR_TIER_NAMES = {
+        "< 1.4", "1.4 - 2.4", "2.4 - 5", "5 - 10", "10 - 100", "100 - 1000", "1000+"
+    };
+
+    private void handleFkdrColor(String[] args) {
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        String[] colors = cfg.getFkdrColors();
+        if (args.length < 2) {
+            print(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dFKDR Colors \u00a77\u2500\u2500\u2500  \u00a77/ov fkdrcolor <1-7> <0-f>");
+            for (int i = 0; i < 7; i++) {
+                print(PREFIX + " \u00a73" + (i + 1) + " \u00a77(" + FKDR_TIER_NAMES[i] + ") \u00a7" + colors[i] + "\u2588\u2588 " + colors[i]);
+            }
+            return;
+        }
+        int tier;
+        try { tier = Integer.parseInt(args[1]); } catch (NumberFormatException e) {
+            print(PREFIX + "\u00a7cTier must be 1-7."); return;
+        }
+        if (tier < 1 || tier > 7) { print(PREFIX + "\u00a7cTier must be 1-7."); return; }
+        if (args.length < 3) {
+            print(PREFIX + "\u00a7eTier " + tier + " (" + FKDR_TIER_NAMES[tier - 1] + "): \u00a7" + colors[tier - 1] + "\u2588\u2588 " + colors[tier - 1]);
+            return;
+        }
+        String code = args[2].toLowerCase();
+        if (code.length() != 1 || VALID_COLOR_CODES.indexOf(code.charAt(0)) == -1) {
+            print(PREFIX + "\u00a7cColor must be a single hex char: 0-9, a-f."); return;
+        }
+        switch (tier) {
+            case 1: cfg.setFkdrColor1(code); break;
+            case 2: cfg.setFkdrColor2(code); break;
+            case 3: cfg.setFkdrColor3(code); break;
+            case 4: cfg.setFkdrColor4(code); break;
+            case 5: cfg.setFkdrColor5(code); break;
+            case 6: cfg.setFkdrColor6(code); break;
+            case 7: cfg.setFkdrColor7(code); break;
+        }
+        cfg.save(); defaultSettings();
+        print(PREFIX + "\u00a7eFKDR tier " + tier + " (" + FKDR_TIER_NAMES[tier - 1] + ") \u00a72\u2192\u00a7 " + code + "\u2588\u2588 " + code);
     }
 
     private void printColStatus() {
@@ -1953,6 +2192,14 @@ public class OverlayManager {
             case "clearonwho":       return boolStr(c.isClearOnWho());
             case "middleclickshop": return boolStr(c.isMiddleClickShop());
             case "skindenick":      return boolStr(c.isSkinDenick());
+            case "fkdrcolors":      return boolStr(c.isFkdrColors());
+            case "autowho":         return boolStr(c.isAutoWho());
+            case "whodelay":        return "\u00a7e" + c.getWhoDelay() + "s";
+            case "hidewho":         return boolStr(c.isHideWho());
+            case "dodgewarning":    return boolStr(c.isDodgeWarning());
+            case "dodgethreshold":  return "\u00a7e" + c.getDodgeThreshold();
+            case "nohurtcam":       return boolStr(c.isNoHurtCam());
+            case "antidebuff":      return boolStr(c.isAntiDebuff());
             case "sendnicked":       return boolStr(c.isSendNickedToChat());
             case "sendurchinreason": return boolStr(c.isSendUrchinReasonToChat());
             case "keybindhold":      return boolStr(c.isKeybindHold());

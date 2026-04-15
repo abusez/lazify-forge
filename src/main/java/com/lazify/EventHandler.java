@@ -1,5 +1,6 @@
 package com.lazify;
 
+import com.lazify.config.GuiClickMenu;
 import com.lazify.config.LazifyConfig;
 import com.lazify.overlay.OverlayManager;
 import net.minecraft.client.Minecraft;
@@ -8,10 +9,14 @@ import net.minecraft.client.gui.inventory.GuiContainer;
 import net.minecraft.inventory.ContainerChest;
 import net.minecraft.inventory.Slot;
 import java.lang.reflect.Field;
+import net.minecraft.potion.Potion;
+import net.minecraft.potion.PotionEffect;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
+import net.minecraftforge.client.event.FOVUpdateEvent;
 import net.minecraftforge.client.event.GuiScreenEvent;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
+import net.minecraftforge.fml.client.event.ConfigChangedEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.lwjgl.input.Keyboard;
@@ -55,6 +60,22 @@ public class EventHandler {
                 }
             }
             keyWasDown = keyDown;
+
+            // Keybind opens click GUI
+            if (LazifyMod.guiKeybind.isPressed()) {
+                mc.displayGuiScreen(new GuiClickMenu());
+            }
+        }
+
+        // NoHurtCam: suppress damage camera tilt
+        if (LazifyConfig.INSTANCE.isNoHurtCam() && mc.thePlayer != null) {
+            mc.thePlayer.hurtTime = 0;
+        }
+
+        // AntiDebuff: remove visual debuff effects
+        if (LazifyConfig.INSTANCE.isAntiDebuff() && mc.thePlayer != null) {
+            if (mc.thePlayer.isPotionActive(9))  mc.thePlayer.removePotionEffect(9);  // nausea
+            if (mc.thePlayer.isPotionActive(15)) mc.thePlayer.removePotionEffect(15); // blindness
         }
 
         tickCounter++;
@@ -122,6 +143,27 @@ public class EventHandler {
             3, // creative/pick mode
             mc.thePlayer
         );
+    }
+
+    @SubscribeEvent
+    public void onFOVUpdate(FOVUpdateEvent event) {
+        if (!LazifyConfig.INSTANCE.isAntiDebuff()) return;
+        // Counteract slowness FOV reduction: vanilla applies fov *= 1 - (amplifier+1) * 0.075
+        if (event.entity.isPotionActive(Potion.moveSlowdown)) {
+            PotionEffect effect = event.entity.getActivePotionEffect(Potion.moveSlowdown);
+            if (effect != null) {
+                float slowFactor = 1.0F - (effect.getAmplifier() + 1) * 0.075F;
+                if (slowFactor > 0) event.newfov /= slowFactor;
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public void onConfigChanged(ConfigChangedEvent.OnConfigChangedEvent event) {
+        if (!event.modID.equals(LazifyMod.MODID)) return;
+        LazifyConfig.INSTANCE.syncFromFile();
+        LazifyConfig.INSTANCE.save();
+        OverlayManager.INSTANCE.defaultSettings();
     }
 
     private static boolean isBedwarsShop(String title) {
