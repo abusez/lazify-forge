@@ -1,0 +1,44 @@
+# Gradle
+.gradle/
+build/
+out/
+
+.claude/
+CLAUDE.md
+changelog.md
+AGENTS.md
+.agents/
+skills/
+image.png
+instructions.md
+skills-lock.json
+
+# Eclipse
+.classpath
+.project
+.settings/
+bin/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# VS Code
+.vscode/
+
+# ForgeGradle run directory
+run/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local config (contains API keys)
+src/main/resources/lazify.cfg
+run/config/
+local.properties

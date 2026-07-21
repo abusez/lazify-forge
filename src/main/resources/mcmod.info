@@ -1,0 +1,16 @@
+[
+{
+  "modid": "lazify",
+  "name": "Lazify",
+  "description": "Hypixel Bedwars HUD overlay showing player stats, FKDR, winstreak, Urchin tags and more.",
+  "version": "${version}",
+  "mcversion": "1.8.9",
+  "url": "",
+  "updateUrl": "",
+  "authorList": ["lazify", "hugoqwq666", "claude code"],
+  "credits": "Ported from Raven B4 Lazify3 script made by hugoqwq666",
+  "logoFile": "",
+  "screenshots": [],
+  "dependencies": []
+}
+]
