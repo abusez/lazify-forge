@@ -6,7 +6,7 @@ A Minecraft Forge mod for **1.8.9** that displays a real-time HUD overlay showin
 
 - Live player stats table overlay during Bedwars matches
 - Shows star level, FKDR, winstreak, session duration, and encounter count
-- Urchin API integration for cheater detection tags
+- Urchin/Coral API integration for cheater detection tags
 - Hypixel rank display with proper formatting and colors
 - Team color coding
 - Prestige-based star colors (50+ prestige levels)
@@ -23,7 +23,7 @@ A Minecraft Forge mod for **1.8.9** that displays a real-time HUD overlay showin
 - Minecraft 1.8.9
 - Minecraft Forge 11.15.1.2318
 - Java 8
-- Urchin API key (optional, for cheater tags)
+- Urchin/Coral API key (optional, for cheater tags)
 
 ## Building
 
@@ -45,7 +45,7 @@ The config file is stored at `.minecraft/config/lazify.cfg`.
 
 Run `/ov 2` to view all settings grouped by category. Toggle any boolean setting with `/ov <setting>` or set a value with `/ov <setting> <value>`.
 
-Set your Urchin API key (optional): `/ov key urchin <your-key>`
+Set your Urchin/Coral API key (optional): `/ov key urchin/coral <your-key>`
 
 ## Commands
 
@@ -60,9 +60,9 @@ All commands use the `/ov` prefix (aliases: `/overlay`, `/lazify`).
 | `/ov clearhidden` | Clear the hidden players list |
 | `/ov reload` | Re-fetch stats for all players |
 | `/ov clear` | Clear all players from overlay |
-| `/ov key urchin <key>` | Set your Urchin API key |
+| `/ov key urchin/coral <key>` | Set your Urchin/Coral API key |
 | `/ov tags` | Show overlay tag definitions |
-| `/ov tag <player>` | Look up a player's full Urchin tags |
+| `/ov tag <player>` | Look up a player's full Urchin/Coral tags |
 | `/ov col <column>` | Toggle column visibility |
 | `/ov sortby <0-5>` | Sort by column (0=Encounters, 1=Star, 2=FKDR, 3=Index, 4=Winstreak, 5=JoinTime) |
 | `/ov sortmode <0/1>` | 0=ascending (highest on top), 1=descending |
@@ -84,7 +84,7 @@ Toggle any boolean setting with `/ov <name>`, or set explicitly with `/ov <name>
 | `skindenick` | on | Detect nicked players by their skin |
 | `middleclickshop` | off | Convert clicks to middle-click in BW shops (shift-click still works normally) |
 | `sendnicked` | on | Print chat notice for nicked players |
-| `sendurchinreason` | off | Print Urchin tag reason to chat |
+| `sendurchinreason` | off | Print Urchin/Coral tag reason to chat |
 | `keybindhold` | off | Hold key to show overlay instead of toggle |
 | `showontab` | on | Show overlay while holding Tab |
 | `debug` | off | Print debug messages to chat |

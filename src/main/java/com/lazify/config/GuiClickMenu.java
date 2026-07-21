@@ -336,7 +336,7 @@ public class GuiClickMenu extends GuiScreen {
                 for (ColEntry ce : colMap.values()) entries.add(ce);
                 break;
             case 5: { // API
-                entries.add(new KeySettingEntry("Urchin Key", c::getUrchinKey, v -> {
+                entries.add(new KeySettingEntry("Urchin/Coral Key", c::getUrchinKey, v -> {
                     c.setUrchinKey(v); c.save(); OverlayManager.INSTANCE.refreshOverlayTags();
                 }));
                 entries.add(new KeySettingEntry("Seraph Key", c::getSeraphKey, v -> {

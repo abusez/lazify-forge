@@ -1,7 +1,7 @@
 package com.lazify.util;
 
 /**
- * Combined Urchin + Seraph tag state for one player.
+ * Combined Urchin/Coral + Seraph tag state for one player.
  */
 public final class TagInfo {
 
@@ -35,6 +35,10 @@ public final class TagInfo {
         if (hasUrchin) best = Math.max(best, threatForType(urchinType));
         if (hasSeraph) best = Math.max(best, threatForType(seraphType));
         return best;
+    }
+
+    public static double threatForTypePublic(String type) {
+        return threatForType(type);
     }
 
     private static double threatForType(String type) {

@@ -2,7 +2,7 @@
 {
   "modid": "lazify",
   "name": "Lazify",
-  "description": "Hypixel Bedwars HUD overlay showing player stats, FKDR, winstreak, Urchin tags and more.",
+  "description": "Hypixel Bedwars HUD overlay showing player stats, FKDR, winstreak, Urchin/Coral tags and more.",
   "version": "${version}",
   "mcversion": "1.8.9",
   "url": "",

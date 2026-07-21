@@ -28,6 +28,8 @@ import net.minecraft.util.ChatComponentText;
 import org.lwjgl.input.Keyboard;
 
 import java.io.File;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -148,6 +150,7 @@ public class OverlayManager {
     int   background, borderColorRGB, columnTitles;
 
     static final String PREFIX = "\u00a77[\u00a7dL\u00a77]\u00a7r ";
+    static final String URCHIN_CORAL_LABEL = "Urchin/Coral";
 
     private static final Pattern CHAT_SENDER  = Pattern.compile("^(?:\\[[\\w+]+\\] )?(\\w+) ?: .+");
     private static final Pattern LOBBY_JOIN   = Pattern.compile("^(\\w+) has joined \\((\\d+)/(\\d+)\\)!$");
@@ -227,9 +230,9 @@ public class OverlayManager {
         defaultSettings();
         print(PREFIX + "\u00a7eWelcome to \u00a73Lazify\u00a7e! Please run \u00a73/ov\u00a7e for commands.");
         if (urchinKey().isEmpty() && seraphKey().isEmpty())
-            print(PREFIX + "\u00a7eNo tag API keys set. Use \u00a73/ov key urchin <key>\u00a7e or \u00a73/ov key seraph <key>\u00a7e.");
+            print(PREFIX + "\u00a7eNo tag API keys set. Use \u00a73/ov key urchin/coral <key>\u00a7e or \u00a73/ov key seraph <key>\u00a7e.");
         else if (urchinKey().isEmpty())
-            print(PREFIX + "\u00a7eNo Urchin API key set. Use \u00a73/ov key urchin <key>\u00a7e for Urchin tags.");
+            print(PREFIX + "\u00a7eNo " + URCHIN_CORAL_LABEL + " API key set. Use \u00a73/ov key urchin/coral <key>\u00a7e for blacklist tags.");
         else if (seraphKey().isEmpty())
             print(PREFIX + "\u00a7eNo Seraph API key set. Use \u00a73/ov key seraph <key>\u00a7e for Seraph tags.");
         if (bordicKey().isEmpty())
@@ -1460,7 +1463,7 @@ public class OverlayManager {
         ignoredPlayers.clear();
     }
 
-    /** Re-fetch Urchin/Seraph tags for everyone currently on the overlay. */
+    /** Re-fetch Urchin/Coral + Seraph tags for everyone currently on the overlay. */
     public void refreshOverlayTags() {
         tagCache.clear();
         final String lobby = currentLobby;
@@ -2697,9 +2700,11 @@ public class OverlayManager {
     }
 
     // ==========================================================================
-    // Urchin + Seraph tag fetching (async)
+    // Coral (Urchin blacklist) + Seraph tag fetching (async)
     // ==========================================================================
 
+    private static final String CORAL_TAGS_URL = "https://api.urchin.gg/v3/player/tags?player=";
+    private static final String LEGACY_URCHIN_URL = "https://urchin.ws/player/";
     private static final String SERAPH_BLACKLIST_URL = "https://api.seraph.si/";
     private final ConcurrentHashMap<String, Object> tagFetchLocks = new ConcurrentHashMap<>();
 
@@ -2720,14 +2725,15 @@ public class OverlayManager {
             boolean hasUrchinKey = urchinKey() != null && !urchinKey().isEmpty();
             boolean hasSeraphKey = seraphKey() != null && !seraphKey().isEmpty();
             if (!hasUrchinKey && !hasSeraphKey) {
-                debugFromThread("Tags skipped for " + tagUuid + " (no Urchin or Seraph key set)");
+                debugFromThread("Tags skipped for " + tagUuid + " (no " + URCHIN_CORAL_LABEL + " or Seraph key set)");
                 return;
             }
 
             TagInfo info = new TagInfo();
 
             if (hasUrchinKey) {
-                fetchUrchinTag(tagUuid, info);
+                String username = uuidToName.getOrDefault(overlayUuid, uuidToName.getOrDefault(tagUuid, ""));
+                fetchUrchinCoralTag(tagUuid, username, info);
             }
             if (hasSeraphKey) {
                 fetchSeraphTag(tagUuid, info);
@@ -2747,7 +2753,7 @@ public class OverlayManager {
 
             if (LazifyConfig.INSTANCE.isSendUrchinReasonToChat()) {
                 if (info.hasUrchin) {
-                    notifyTagInChat(username, "Urchin", info.urchinType, info.urchinReason);
+                    notifyTagInChat(username, URCHIN_CORAL_LABEL, info.urchinType, info.urchinReason);
                 }
                 if (info.hasSeraph) {
                     notifyTagInChat(username, "Seraph", info.seraphType, info.seraphReason);
@@ -2756,28 +2762,126 @@ public class OverlayManager {
         }
     }
 
-    private void fetchUrchinTag(String uuid, TagInfo info) {
+    private void fetchUrchinCoralTag(String uuid, String username, TagInfo info) {
+        if (info.hasUrchin) return;
+        String playerId = normalizeTagPlayerId(uuid);
+        if (tryCoralTags(playerId, info, true)) return;
+        if (tryCoralTags(playerId, info, false)) return;
+        if (username != null && !username.isEmpty() && !username.equalsIgnoreCase(playerId)) {
+            if (tryCoralTags(username, info, true)) return;
+            if (tryCoralTags(username, info, false)) return;
+        }
+        tryLegacyUrchinTag(playerId, info);
+    }
+
+    private static String normalizeTagPlayerId(String uuid) {
+        if (uuid == null) return "";
+        return uuid.replace("-", "");
+    }
+
+    private boolean tryCoralTags(String player, TagInfo info, boolean headerAuth) {
         try {
-            String url = "https://urchin.ws/player/" + uuid + "?key=" + urchinKey() + "&sources=GAME";
-            debugFromThread("Fetching Urchin tag for " + uuid);
+            String encodedPlayer = urlEncode(player);
+            String key = urchinKey();
+            String url = CORAL_TAGS_URL + encodedPlayer;
+            Map<String, String> headers = null;
+            if (headerAuth) {
+                headers = new HashMap<>();
+                headers.put("X-API-Key", key);
+            } else {
+                url += "&key=" + urlEncode(key);
+            }
+            debugFromThread("Fetching " + URCHIN_CORAL_LABEL + " tag for " + player
+                    + (headerAuth ? " (header auth)" : " (query auth)"));
+            Object[] res = HttpUtil.get(url, 3000, headers);
+            int code = (int) res[1];
+            debugFromThread(URCHIN_CORAL_LABEL + " API response: HTTP " + code + " for " + player);
+            if (code == 401 || code == 403) {
+                debugFromThread(URCHIN_CORAL_LABEL + " auth failed (HTTP " + code + ") — check /ov key urchin/coral");
+                return false;
+            }
+            if (code != 200) return false;
+            return applyCoralTagJson((JsonWrapper) res[0], player, info);
+        } catch (Exception e) {
+            debugFromThread(URCHIN_CORAL_LABEL + " fetch error for " + player + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    private void tryLegacyUrchinTag(String player, TagInfo info) {
+        if (info.hasUrchin) return;
+        try {
+            String url = LEGACY_URCHIN_URL + urlEncode(player)
+                    + "?key=" + urlEncode(urchinKey()) + "&sources=GAME";
+            debugFromThread("Fetching legacy Urchin tag for " + player);
             Object[] res = HttpUtil.get(url, 3000);
-            debugFromThread("Urchin API response: HTTP " + (int) res[1] + " for " + uuid);
-            if ((int) res[1] != 200) return;
+            int code = (int) res[1];
+            debugFromThread("Legacy Urchin API response: HTTP " + code + " for " + player);
+            if (code != 200) return;
 
             JsonWrapper json = (JsonWrapper) res[0];
-            List<JsonWrapper> tagsArray = json.object().array("tags");
-            if (tagsArray == null || tagsArray.isEmpty()) return;
+            if (!json.exists()) return;
+            if (!json.object().exists()) {
+                String body = json.string().trim();
+                if (body.equalsIgnoreCase("Invalid Key") || body.toLowerCase().contains("invalid key")) {
+                    debugFromThread(URCHIN_CORAL_LABEL + " key rejected by legacy Urchin API");
+                }
+                return;
+            }
+            applyCoralTagJson(json, player, info);
+        } catch (Exception e) {
+            debugFromThread("Legacy Urchin fetch error for " + player + ": " + e.getMessage());
+        }
+    }
 
-            JsonWrapper firstTag = tagsArray.get(0);
-            String tagType = firstTag.object().get("type", "");
-            String reason = firstTag.object().get("reason", "");
-            if (tagType.isEmpty()) return;
+    private boolean applyCoralTagJson(JsonWrapper json, String player, TagInfo info) {
+        List<JsonWrapper> tagsArray = json.object().array("tags");
+        if (tagsArray == null || tagsArray.isEmpty()) return false;
 
-            info.hasUrchin = true;
-            info.urchinType = tagType;
-            info.urchinReason = reason;
-            debugFromThread("Urchin tag for " + uuid + ": type=" + tagType + " reason=" + reason);
-        } catch (Exception ignored) {}
+        String bestType = "";
+        String bestReason = "";
+        double bestThreat = 0.0;
+
+        for (JsonWrapper tag : tagsArray) {
+            JsonWrapper obj = tag.object();
+            if (!obj.exists()) continue;
+            String tagType = obj.get("tag_type", obj.get("type", ""));
+            String reason = obj.get("reason", "");
+            if (tagType.isEmpty() || isCoralNoticeTag(tagType, reason)) continue;
+
+            double threat = TagInfo.threatForTypePublic(tagType);
+            if (threat > bestThreat || bestType.isEmpty()) {
+                bestThreat = threat;
+                bestType = tagType;
+                bestReason = reason;
+            }
+        }
+
+        if (bestType.isEmpty()) return false;
+
+        info.hasUrchin = true;
+        info.urchinType = bestType;
+        info.urchinReason = bestReason;
+        debugFromThread(URCHIN_CORAL_LABEL + " tag for " + player + ": type=" + bestType + " reason=" + bestReason);
+        return true;
+    }
+
+    private static String urlEncode(String value) {
+        try {
+            return URLEncoder.encode(value, "UTF-8");
+        } catch (UnsupportedEncodingException e) {
+            return value;
+        }
+    }
+
+    private static boolean isCoralNoticeTag(String tagType, String reason) {
+        if (reason == null) return false;
+        String lower = reason.toLowerCase();
+        if (lower.contains("urchin api is deprecated") || lower.contains("notice for the developer")) {
+            return true;
+        }
+        String norm = tagType == null ? "" : tagType.toLowerCase().replace(' ', '_');
+        return norm.equals("caution") && lower.contains("migrate to the new api");
     }
 
     private void fetchSeraphTag(String uuid, TagInfo info) {
@@ -3012,7 +3116,7 @@ public class OverlayManager {
                 print(PREFIX + "\u00a7dTag legend");
                 print(PREFIX + "\u00a7e[N] \u00a77Nicked player");
                 print(PREFIX + "\u00a7e[NICK] \u00a77Rank column \u00a77| \u00a77[NON] \u00a77No rank");
-                print(PREFIX + "\u00a77\u2014 \u00a7dUrchin \u00a77\u2014");
+                print(PREFIX + "\u00a77\u2014 \u00a7d" + URCHIN_CORAL_LABEL + " \u00a77\u2014");
                 print(PREFIX + "\u00a7c[C] \u00a77Confirmed Cheater");
                 print(PREFIX + "\u00a7e[CC] \u00a77Closet Cheater");
                 print(PREFIX + "\u00a7c[BC] \u00a77Blatant Cheater");
@@ -3021,14 +3125,14 @@ public class OverlayManager {
                 print(PREFIX + "\u00a7c[BL] \u00a77Blacklisted / unknown type");
                 print(PREFIX + "\u00a77Uses same \u00a7c[C]\u00a77/\u00a7e[CC]\u00a77/\u00a7c[BC]\u00a77/\u00a74[S] \u00a77when applicable");
                 print(PREFIX + "\u00a77\u2014 \u00a7dBoth \u00a77\u2014");
-                print(PREFIX + "\u00a77+ \u00a77Shown when tagged on Urchin and Seraph");
+                print(PREFIX + "\u00a77+ \u00a77Shown when tagged on " + URCHIN_CORAL_LABEL + " and Seraph");
                 return;
 
             case "tag":
                 if (args.length < 2) { print(PREFIX + "\u00a7eUsage: \u00a73/ov tag <username>"); return; }
                 if ((urchinKey() == null || urchinKey().isEmpty())
                         && (seraphKey() == null || seraphKey().isEmpty())) {
-                    print(PREFIX + "\u00a7cNo tag keys set. Use \u00a73/ov key urchin <key>\u00a7c or \u00a73/ov key seraph <key>"); return;
+                    print(PREFIX + "\u00a7cNo tag keys set. Use \u00a73/ov key urchin/coral <key>\u00a7c or \u00a73/ov key seraph <key>"); return;
                 }
                 final String tagPlayer = args[1];
                 new Thread(() -> {
@@ -3052,16 +3156,16 @@ public class OverlayManager {
                     }
 
                     TagInfo info = new TagInfo();
-                    if (urchinKey() != null && !urchinKey().isEmpty()) fetchUrchinTag(uuid, info);
+                    if (urchinKey() != null && !urchinKey().isEmpty()) fetchUrchinCoralTag(uuid, tagPlayer, info);
                     if (seraphKey() != null && !seraphKey().isEmpty()) fetchSeraphTag(uuid, info);
 
                     if (!info.hasAnyTag()) {
-                        printFromThread(PREFIX + "\u00a73" + tagPlayer + "\u00a7e has no Urchin or Seraph tags.");
+                        printFromThread(PREFIX + "\u00a73" + tagPlayer + "\u00a7e has no " + URCHIN_CORAL_LABEL + " or Seraph tags.");
                         return;
                     }
 
                     if (info.hasUrchin) {
-                        printFromThread(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dUrchin: \u00a73" + tagPlayer + " \u00a77\u2500\u2500\u2500");
+                        printFromThread(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7d" + URCHIN_CORAL_LABEL + ": \u00a73" + tagPlayer + " \u00a77\u2500\u2500\u2500");
                         String formatted = TagInfo.formatSourceType(info.urchinType);
                         String color = info.urchinType.contains("cheater") ? "\u00a7c" : "\u00a7e";
                         if (info.urchinReason.isEmpty()) {
@@ -3104,12 +3208,13 @@ public class OverlayManager {
                 return;
 
             case "key":
-                if (args.length < 3) { print(PREFIX + "\u00a7eUsage: \u00a73/ov key <urchin|seraph|bordic|hypixel> <key>"); return; }
+                if (args.length < 3) { print(PREFIX + "\u00a7eUsage: \u00a73/ov key <urchin/coral|seraph|bordic|hypixel> <key>"); return; }
                 String keyType = args[1].toLowerCase();
-                if (keyType.equals("urchin")) {
+                if (keyType.equals("urchin") || keyType.equals("urchin/coral")) keyType = "coral";
+                if (keyType.equals("coral")) {
                     LazifyConfig.INSTANCE.setUrchinKey(args[2]); LazifyConfig.INSTANCE.save();
                     refreshOverlayTags();
-                    print(PREFIX + "\u00a7eUrchin API key saved.");
+                    print(PREFIX + "\u00a7e" + URCHIN_CORAL_LABEL + " API key saved.");
                 } else if (keyType.equals("seraph")) {
                     LazifyConfig.INSTANCE.setSeraphKey(args[2]); LazifyConfig.INSTANCE.save();
                     refreshOverlayTags();
@@ -3123,7 +3228,7 @@ public class OverlayManager {
                     print(PREFIX + "\u00a7eHypixel API key saved.");
                 } else {
                     print(PREFIX + "\u00a7eUnknown key type: \u00a73" + args[1]
-                            + "\u00a7e. Use \u00a73urchin\u00a7e, \u00a73seraph\u00a7e, \u00a73bordic\u00a7e, or \u00a73hypixel\u00a7e.");
+                            + "\u00a7e. Use \u00a73urchin/coral\u00a7e, \u00a73seraph\u00a7e, \u00a73bordic\u00a7e, or \u00a73hypixel\u00a7e.");
                 }
                 return;
 
@@ -3359,9 +3464,9 @@ public class OverlayManager {
         print(PREFIX + "\u00a77clearhidden\u00a77 \u00a7e\u2013 show all hidden players again");
         print(PREFIX + "\u00a77reload\u00a77 \u00a7e\u2013 re-fetch stats for everyone");
         print(PREFIX + "\u00a77clear\u00a77 \u00a7e\u2013 remove all players from overlay");
-        print(PREFIX + "\u00a77key \u00a7e<urchin|seraph|bordic|hypixel> <key>\u00a77 \u00a7e\u2013 set API key");
+        print(PREFIX + "\u00a77key \u00a7e<urchin/coral|seraph|bordic|hypixel> <key>\u00a77 \u00a7e\u2013 set API key");
         print(PREFIX + "\u00a77tags\u00a77 \u00a7e\u2013 show overlay tag definitions");
-        print(PREFIX + "\u00a77tag \u00a7e<user>\u00a77 \u00a7e\u2013 show player's Urchin + Seraph tags");
+        print(PREFIX + "\u00a77tag \u00a7e<user>\u00a77 \u00a7e\u2013 show player's " + URCHIN_CORAL_LABEL + " + Seraph tags");
         print(PREFIX + "\u00a77fkdrcolor \u00a7e<1-7> <0-f>\u00a77 \u00a7e\u2013 set FKDR tier color");
         if (LazifyConfig.INSTANCE.isDebug()) {
             print(PREFIX + "\u00a78debugsb\u00a77 \u00a7e\u2013 dump scoreboard data to chat");
@@ -3452,7 +3557,7 @@ public class OverlayManager {
             + colLine("ping", c.isColPing()));
 
         // ── Status ──
-        print(PREFIX + "\u00a77urchin key: " + (c.getUrchinKey().isEmpty() ? "\u00a7cnot set" : "\u00a7aset")
+        print(PREFIX + "\u00a77" + URCHIN_CORAL_LABEL + " key: " + (c.getUrchinKey().isEmpty() ? "\u00a7cnot set" : "\u00a7aset")
             + "  \u00a77seraph key: " + (c.getSeraphKey().isEmpty() ? "\u00a7cnot set" : "\u00a7aset") + "  "
             + "\u00a77overlay: " + (visible ? "\u00a7avisible" : "\u00a7chidden") + "  "
             + "\u00a77debug: \u00a7" + (c.isDebug() ? "a" : "c") + c.isDebug());

@@ -123,11 +123,11 @@ public class LazifyConfig {
         Property p;
 
         p = config.get("api", "urchinKey", "");
-        p.comment = "Your Urchin API key from urchin.ws. Enables cheater detection tags in the overlay.";
+        p.comment = "Your Urchin/Coral API key from api.urchin.gg. Enables blacklist tags in the overlay.";
         urchinKey = p.getString();
 
         p = config.get("api", "seraphKey", "");
-        p.comment = "Your Seraph API key from seraph.si. Enables blacklist tags alongside Urchin.";
+        p.comment = "Your Seraph API key from seraph.si. Enables blacklist tags alongside Urchin/Coral.";
         seraphKey = p.getString();
 
         p = config.get("api", "bordicKey", "");
@@ -195,7 +195,7 @@ public class LazifyConfig {
         sendNickedToChat = p.getBoolean(true);
 
         p = config.get("general", "sendUrchinReasonToChat", false);
-        p.comment = "Print tag reasons in chat when a tagged player is found (includes Urchin/Seraph source).";
+        p.comment = "Print tag reasons in chat when a tagged player is found (includes Urchin/Coral and Seraph source).";
         sendUrchinReasonToChat = p.getBoolean(false);
 
         // ── General: Features ─────────────────────────────────────────────────
@@ -252,7 +252,7 @@ public class LazifyConfig {
         threatWinstreakWeight = p.getDouble(0.3);
 
         p = config.get("general", "threatUrchinWeight", 1.4);
-        p.comment = "Weight applied to Urchin tag severity in team threat scoring.";
+        p.comment = "Weight applied to Urchin/Coral tag severity in team threat scoring.";
         threatUrchinWeight = p.getDouble(1.4);
 
         p = config.get("general", "threatTeamSizeWeight", 0.9);
@@ -322,7 +322,7 @@ public class LazifyConfig {
         colWinstreaks = p.getBoolean(true);
 
         p = config.get("columns", "colUrchin", true);
-        p.comment = "Show the Tags column (Urchin + Seraph cheater detection).";
+        p.comment = "Show the Tags column (Urchin/Coral + Seraph cheater detection).";
         colUrchin = p.getBoolean(true);
 
         p = config.get("columns", "colSession", true);
