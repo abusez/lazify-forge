@@ -100,7 +100,7 @@ Modes:
 
 ## Credits
 
-Ported from the Raven B4 Lazify3 script.
-bordic api - https://bordix.xyz
-Nerdify overlay theme - https://www.youtube.com/watch?v=WDMJBVlOC-I
+Ported from the Raven B4 Lazify3 script.<br>
+bordic api - https://bordix.xyz<br>
+Nerdify overlay theme - https://www.youtube.com/watch?v=WDMJBVlOC-I<br>
 Mellow overlay theme - https://github.com/Roxiun/Mellow
