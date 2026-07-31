@@ -11,12 +11,12 @@ import java.util.List;
 
 public class CommandOv extends CommandBase {
 
-    private static final String[] CONTROL_CMDS = {"sc","hide","clearhidden","reload","clear","key","set","tags","tag"};
+    private static final String[] CONTROL_CMDS = {"help","sc","hide","clearhidden","reload","clear","key","set","tags","tag"};
     private static final String[] KEY_TYPES     = {"urchin/coral", "coral", "urchin", "seraph", "bordic", "hypixel"};
     private static final String[] BOOL_VALS     = {"true","false"};
 
     @Override public String getCommandName()  { return "ov"; }
-    @Override public String getCommandUsage(ICommandSender s) { return "/ov [setting] [value]"; }
+    @Override public String getCommandUsage(ICommandSender s) { return "/ov | /lazify [setting] [value]  (no args opens GUI)"; }
     @Override public int    getRequiredPermissionLevel() { return 0; }
     @Override public List<String> getCommandAliases() { return Arrays.asList("overlay", "lazify"); }
 

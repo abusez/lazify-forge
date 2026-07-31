@@ -41,7 +41,7 @@ The output JAR will be in `build/retromapping/retromappedReplacedMain.jar`.
 
 ## Configuration
 
-The config file is stored at `.minecraft/config/lazify.cfg`.
+The config file is stored at `.minecraft/config/lazify/lazify.cfg`. On first launch after updating, a legacy `.minecraft/config/lazify.cfg` is copied into that folder.
 
 Run `/ov 2` to view all settings grouped by category. Toggle any boolean setting with `/ov <setting>` or set a value with `/ov <setting> <value>`.
 
@@ -101,3 +101,6 @@ Modes:
 ## Credits
 
 Ported from the Raven B4 Lazify3 script.
+bordic api - https://bordix.xyz
+Nerdify overlay theme - https://www.youtube.com/watch?v=WDMJBVlOC-I
+Mellow overlay theme - https://github.com/Roxiun/Mellow

@@ -23,6 +23,32 @@ public class ColorUtil {
         return text.replaceAll("\u00a7[0-9a-fk-orA-FK-OR]", "");
     }
 
+    /**
+     * True when the first visible character is colored gray ({@code §7}).
+     * Used to ignore Hypixel spectators / gray tab names.
+     */
+    public static boolean isGrayNamed(String formatted) {
+        if (formatted == null || formatted.isEmpty()) return false;
+        char color = 'f';
+        for (int i = 0; i < formatted.length(); i++) {
+            char c = formatted.charAt(i);
+            if (c == '\u00a7' && i + 1 < formatted.length()) {
+                char code = Character.toLowerCase(formatted.charAt(i + 1));
+                if ((code >= '0' && code <= '9') || (code >= 'a' && code <= 'f')) {
+                    color = code;
+                } else if (code == 'r') {
+                    color = 'f';
+                }
+                i++;
+                continue;
+            }
+            if (!Character.isWhitespace(c)) {
+                return color == '7';
+            }
+        }
+        return false;
+    }
+
     /** True when §k / &k obfuscation is active on or immediately before {@code name} in formatted text. */
     public static boolean hasObfuscationBefore(String formatted, String name) {
         if (formatted == null || name == null || name.isEmpty()) return false;
@@ -78,6 +104,24 @@ public class ColorUtil {
         float hue = System.currentTimeMillis() % (15000L / speed) / (15000.0f / speed);
         Color c = Color.getHSBColor(hue, 1.0f, 1.0f);
         return (alpha << 24) | (c.getRed() << 16) | (c.getGreen() << 8) | c.getBlue();
+    }
+
+    /** Pack 0–255 RGB channels into ARGB (alpha fully opaque unless specified). */
+    public static int rgb(int r, int g, int b) {
+        return rgb(r, g, b, 255);
+    }
+
+    public static int rgb(int r, int g, int b, int alpha) {
+        r = Math.max(0, Math.min(255, r));
+        g = Math.max(0, Math.min(255, g));
+        b = Math.max(0, Math.min(255, b));
+        alpha = Math.max(0, Math.min(255, alpha));
+        return (alpha << 24) | (r << 16) | (g << 8) | b;
+    }
+
+    /** Extract R/G/B from a packed ARGB int (ignores alpha). */
+    public static int[] unpackRgb(int argb) {
+        return new int[]{ (argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF };
     }
 
     // ── Prestige color: exact port of the original switch ──────────────────────
@@ -436,6 +480,70 @@ public class ColorUtil {
     public static String formatDoubleStr(double val) {
         if (val % 1 == 0) return String.valueOf((int) val);
         return String.valueOf(val);
+    }
+
+    /** Format a ratio (FKDR/WLR/…) with a fixed decimal place count. */
+    public static String formatRatio(double val, int decimals) {
+        decimals = Math.max(0, Math.min(3, decimals));
+        double r = round(val, decimals);
+        if (decimals <= 0) return String.valueOf((long) Math.rint(r));
+        String s = String.format(java.util.Locale.US, "%." + decimals + "f", r);
+        // Trim trailing zeros after the decimal, but keep at least one digit if non-integer was requested
+        if (s.indexOf('.') >= 0) {
+            while (s.endsWith("0")) s = s.substring(0, s.length() - 1);
+            if (s.endsWith(".")) s = s.substring(0, s.length() - 1);
+        }
+        return s;
+    }
+
+    /** Format a whole number, optionally abbreviated (1200 → 1.2k). */
+    public static String formatCount(long n, boolean abbreviate) {
+        if (!abbreviate) return String.valueOf(n);
+        long abs = Math.abs(n);
+        String sign = n < 0 ? "-" : "";
+        if (abs < 1000L) return sign + abs;
+        if (abs < 100000L) {
+            // 1000–99999 → 1k / 1.2k / 39.8k
+            double k = abs / 1000.0;
+            String s = String.format(java.util.Locale.US, "%.1f", k);
+            if (s.endsWith(".0")) s = s.substring(0, s.length() - 2);
+            return sign + s + "k";
+        }
+        if (abs < 1000000L) return sign + (abs / 1000L) + "k";
+        double m = abs / 1000000.0;
+        String s = String.format(java.util.Locale.US, "%.1f", m);
+        if (s.endsWith(".0")) s = s.substring(0, s.length() - 2);
+        return sign + s + "m";
+    }
+
+    /**
+     * Bedwars star display. When abbreviated and &gt;= 1000, shows e.g. {@code 3.9k}
+     * tinted with the first prestige color (full prestige digit art is skipped).
+     */
+    public static String formatStarDisplay(int stars, boolean abbreviate) {
+        if (stars < 0) stars = 0;
+        if (!abbreviate || stars < 1000) {
+            return getPrestigeColor(stars);
+        }
+        String body = formatCount(stars, true);
+        char color = firstColorCode(getPrestigeColor(stars), '6');
+        return "\u00a7" + color + body;
+    }
+
+    private static char firstColorCode(String formatted, char fallback) {
+        if (formatted == null) return fallback;
+        for (int i = 0; i < formatted.length() - 1; i++) {
+            if (formatted.charAt(i) != '\u00a7') continue;
+            char c = Character.toLowerCase(formatted.charAt(i + 1));
+            if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) return c;
+        }
+        return fallback;
+    }
+
+    /** Ping display: style 0 = bare number, 1 = with {@code ms} suffix. */
+    public static String formatPing(int ping, int style) {
+        if (ping < 0) return "-";
+        return style == 1 ? ping + "ms" : String.valueOf(ping);
     }
 
     public static double round(double val, int decimals) {

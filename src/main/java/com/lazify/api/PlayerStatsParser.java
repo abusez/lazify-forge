@@ -1,6 +1,8 @@
 package com.lazify.api;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.lazify.util.BedwarsExpCalculator;
 
 /**
  * Normalizes Hypixel-shaped player JSON into the structure expected by OverlayManager.parseStats().
@@ -24,7 +26,7 @@ public final class PlayerStatsParser {
         JsonObject root = new JsonObject();
         root.addProperty("provider", provider);
         root.addProperty("name", player.get("displayname", "Unknown"));
-        root.add("network", buildNetwork(player, achievements));
+        root.add("network", buildNetwork(player));
 
         if (bedwarsRaw.exists()) {
             root.add("bedwars", buildBedwars(bedwarsRaw, achievements));
@@ -33,14 +35,79 @@ public final class PlayerStatsParser {
         return new JsonWrapper(root);
     }
 
-    private static JsonObject buildNetwork(JsonWrapper player, JsonWrapper achievements) {
+    /** Fill gaps in {@code primary} from {@code secondary} (rank, stars, etc.). */
+    public static JsonWrapper merge(JsonWrapper primary, JsonWrapper secondary) {
+        if (primary == null || !primary.exists()) return secondary;
+        if (secondary == null || !secondary.exists()) return primary;
+
+        JsonObject root = new JsonParser().parse(primary.getRaw().toString()).getAsJsonObject();
+        mergeNetwork(root, primary.object("network"), secondary.object("network"));
+        mergeBedwars(root, primary.object("bedwars"), secondary.object("bedwars"));
+        return new JsonWrapper(root);
+    }
+
+    public static boolean needsRank(JsonWrapper parsed) {
+        if (parsed == null || !parsed.exists()) return true;
+        JsonWrapper network = parsed.object("network");
+        if (!network.exists()) return true;
+        return isEmptyRank(network.get("rank", ""));
+    }
+
+    private static void mergeNetwork(JsonObject root, JsonWrapper primary, JsonWrapper secondary) {
+        if (!secondary.exists()) return;
+
+        JsonObject network;
+        if (root.has("network") && root.get("network").isJsonObject()) {
+            network = root.getAsJsonObject("network");
+        } else {
+            network = new JsonParser().parse(secondary.getRaw().toString()).getAsJsonObject();
+            root.add("network", network);
+            return;
+        }
+
+        String primaryRank = primary.exists() ? primary.get("rank", "") : "";
+        String secondaryRank = secondary.get("rank", "");
+        if (isEmptyRank(primaryRank) && !isEmptyRank(secondaryRank)) {
+            network.addProperty("rank", secondaryRank);
+        }
+    }
+
+    private static void mergeBedwars(JsonObject root, JsonWrapper primary, JsonWrapper secondary) {
+        if (!secondary.exists()) return;
+
+        JsonObject bedwars;
+        if (root.has("bedwars") && root.get("bedwars").isJsonObject()) {
+            bedwars = root.getAsJsonObject("bedwars");
+        } else {
+            bedwars = new JsonParser().parse(secondary.getRaw().toString()).getAsJsonObject();
+            root.add("bedwars", bedwars);
+            return;
+        }
+
+        JsonWrapper primaryOverall = primary.exists() ? primary.object("overall") : new JsonWrapper(null);
+        JsonWrapper secondaryOverall = secondary.object("overall");
+        if (!secondaryOverall.exists()) return;
+
+        JsonObject overall;
+        if (bedwars.has("overall") && bedwars.get("overall").isJsonObject()) {
+            overall = bedwars.getAsJsonObject("overall");
+        } else {
+            overall = new JsonParser().parse(secondaryOverall.getRaw().toString()).getAsJsonObject();
+            bedwars.add("overall", overall);
+            return;
+        }
+
+        int primaryStars = primaryOverall.exists() ? intVal(primaryOverall, "stars") : 0;
+        int secondaryStars = intVal(secondaryOverall, "stars");
+        if (secondaryStars > primaryStars) {
+            overall.addProperty("stars", secondaryStars);
+        }
+    }
+
+    private static JsonObject buildNetwork(JsonWrapper player) {
         JsonObject network = new JsonObject();
         double networkExp = num(player, "networkExp");
-        String rank = player.get("newPackageRank", player.get("packageRank", ""));
-        String monthlyRank = player.get("monthlyPackageRank", "");
-        if (monthlyRank != null && !monthlyRank.isEmpty() && !"NONE".equals(monthlyRank)) {
-            rank = monthlyRank;
-        }
+        String rank = resolveApiRank(player);
 
         network.addProperty("level", networkLevel(networkExp));
         network.addProperty("exp", networkExp);
@@ -56,6 +123,32 @@ public final class PlayerStatsParser {
         return network;
     }
 
+    /** Rank string for {@code formatRankColumn}; prefers paid ranks over staff {@code rank}. */
+    private static String resolveApiRank(JsonWrapper player) {
+        String rank = player.get("newPackageRank", "");
+        if (rank.isEmpty() || "NONE".equals(rank)) {
+            rank = player.get("packageRank", "");
+        }
+        if ("NONE".equals(rank)) rank = "";
+
+        String monthlyRank = player.get("monthlyPackageRank", "");
+        if (!monthlyRank.isEmpty() && !"NONE".equals(monthlyRank)) {
+            rank = monthlyRank;
+        }
+
+        if (isEmptyRank(rank)) {
+            String staffRank = player.get("rank", "");
+            if (!staffRank.isEmpty() && !"NORMAL".equalsIgnoreCase(staffRank)) {
+                rank = staffRank;
+            }
+        }
+        return rank == null ? "" : rank;
+    }
+
+    private static boolean isEmptyRank(String rank) {
+        return rank == null || rank.isEmpty() || "NONE".equalsIgnoreCase(rank) || "NORMAL".equalsIgnoreCase(rank);
+    }
+
     private static JsonObject buildBedwars(JsonWrapper s, JsonWrapper ach) {
         int fk = intVal(s, "final_kills_bedwars");
         int fd = intVal(s, "final_deaths_bedwars");
@@ -66,8 +159,16 @@ public final class PlayerStatsParser {
         int k = intVal(s, "kills_bedwars");
         int d = intVal(s, "deaths_bedwars");
 
+        int stars = intVal(ach, "bedwars_level");
+        if (stars <= 0) {
+            int experience = intVal(s, "Experience");
+            if (experience > 0) {
+                stars = BedwarsExpCalculator.levelFromExp(experience);
+            }
+        }
+
         JsonObject overall = new JsonObject();
-        overall.addProperty("stars", intVal(ach, "bedwars_level"));
+        overall.addProperty("stars", stars);
         overall.addProperty("coins", intVal(s, "coins"));
         if (s.get("winstreak").exists()) {
             overall.addProperty("winstreak", intVal(s, "winstreak"));

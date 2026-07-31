@@ -14,6 +14,7 @@ public final class OverlayTheme {
 
     public static final int DEFAULT  = 0;
     public static final int NERDIFY  = 1;
+    public static final int MELLOW   = 2;
 
     /** Semi-transparent neutral black base (RGB only; alpha from config). */
     public static final int NERDIFY_BG_RGB = 0x00101010;
@@ -50,6 +51,9 @@ public final class OverlayTheme {
             case OverlayManager.RANK_KEY:       return 36;
             case OverlayManager.STAR_KEY:       return 30;
             case OverlayManager.FKDR_KEY:       return 34;
+            case OverlayManager.WLR_KEY:
+            case OverlayManager.BBLR_KEY:
+            case OverlayManager.KDR_KEY:       return 34;
             case OverlayManager.WINSTREAK_KEY:  return 24;
             case OverlayManager.URCHIN_KEY:     return 36;
             case OverlayManager.PING_KEY:       return 28;
@@ -71,10 +75,15 @@ public final class OverlayTheme {
         return theme == NERDIFY;
     }
 
+    public static boolean isMellow(int theme) {
+        return theme == MELLOW;
+    }
+
     public static String themeName(int theme) {
         switch (theme) {
             case NERDIFY: return "Nerdify";
-            default:      return "Default";
+            case MELLOW:  return "Mellow";
+            default:      return "Lazify";
         }
     }
 
@@ -87,8 +96,11 @@ public final class OverlayTheme {
             case OverlayManager.RANK_KEY:       return "rank";
             case OverlayManager.STAR_KEY:       return "star";
             case OverlayManager.FKDR_KEY:     return "fkdr";
+            case OverlayManager.WLR_KEY:      return "wlr";
+            case OverlayManager.BBLR_KEY:     return "bblr";
+            case OverlayManager.KDR_KEY:      return "kdr";
             case OverlayManager.WINSTREAK_KEY:  return "ws";
-            case OverlayManager.URCHIN_KEY:     return "tag";
+            case OverlayManager.URCHIN_KEY:     return "tags";
             case OverlayManager.SESSION_KEY:    return "sess";
             case OverlayManager.LEVEL_KEY:      return "lvl";
             case OverlayManager.PING_KEY:       return "ping";
@@ -110,6 +122,9 @@ public final class OverlayTheme {
             case OverlayManager.STAR_KEY:
                 return styleStar(text);
             case OverlayManager.FKDR_KEY:
+            case OverlayManager.WLR_KEY:
+            case OverlayManager.BBLR_KEY:
+            case OverlayManager.KDR_KEY:
                 return styleFkdr(text);
             case OverlayManager.PING_KEY:
                 return stylePing(text);

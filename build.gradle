@@ -10,7 +10,7 @@ buildscript {
 apply plugin: 'net.minecraftforge.gradle.forge'
 apply plugin: 'java'
 
-version = "3.0"
+version = "260730"
 group = "com.lazify"
 archivesBaseName = "Lazify"
 

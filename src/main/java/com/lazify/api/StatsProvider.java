@@ -6,6 +6,8 @@ import java.util.UUID;
 
 /**
  * Player stats waterfall: Abyss → Prism → Hypixel API v2.
+ * Merges keyless providers so Prism bedwars stats + Abyss rank/stars combine when needed.
+ * When Prism contributes stats but rank is missing, Bordic's Hypixel cache fills rank.
  * When no provider returns stats, multi-API nick confirmation runs (Abyss + Prism + optional Bordic/Hypixel).
  */
 public final class StatsProvider {
@@ -44,24 +46,64 @@ public final class StatsProvider {
         Object[] abyssRes = HttpUtil.get(ABYSS_URL + dashless, TIMEOUT_MS, abyssHeaders());
         JsonWrapper abyssBody = (JsonWrapper) abyssRes[0];
         int abyssCode = (int) abyssRes[1];
-        JsonWrapper abyssStats = tryParseStats(abyssBody, abyssCode, "abyss");
-        if (abyssStats != null) {
-            return new Result(abyssStats, 200, "abyss", false, null);
-        }
 
         Object[] prismRes = HttpUtil.get(PRISM_URL + dashless, TIMEOUT_MS, prismHeaders());
         JsonWrapper prismBody = (JsonWrapper) prismRes[0];
         int prismCode = (int) prismRes[1];
-        JsonWrapper prismStats = tryParseStats(prismBody, prismCode, "prism");
-        if (prismStats != null) {
-            return new Result(prismStats, 200, "prism", false, null);
+
+        JsonWrapper merged = null;
+        StringBuilder providerLabel = new StringBuilder();
+
+        JsonWrapper abyssStats = tryParseStats(abyssBody, abyssCode, "abyss");
+        if (abyssStats != null) {
+            merged = abyssStats;
+            providerLabel.append("abyss");
         }
 
+        JsonWrapper prismStats = tryParseStats(prismBody, prismCode, "prism");
+        boolean prismUsed = prismStats != null;
+        if (prismStats != null) {
+            if (merged == null) {
+                merged = prismStats;
+                providerLabel.append("prism");
+            } else {
+                merged = PlayerStatsParser.merge(merged, prismStats);
+                providerLabel.append("+prism");
+            }
+        }
+
+        boolean hypixelChecked = hypixelKey != null && !hypixelKey.isEmpty();
         JsonWrapper hypixelBody = null;
         int hypixelCode = 0;
         boolean hypixelNick = true;
-        boolean hypixelChecked = hypixelKey != null && !hypixelKey.isEmpty();
-        if (hypixelChecked) {
+
+        if (merged != null && prismUsed && PlayerStatsParser.needsRank(merged)) {
+            Object[] bordicRes = NickDetector.fetchBordicCache(dashless, bordicKey);
+            JsonWrapper bordicStats = tryParseStats((JsonWrapper) bordicRes[0], (int) bordicRes[1], "bordic");
+            if (bordicStats != null) {
+                merged = PlayerStatsParser.merge(merged, bordicStats);
+                if (providerLabel.length() > 0) providerLabel.append("+");
+                providerLabel.append("bordic");
+            }
+        }
+
+        if (merged != null && PlayerStatsParser.needsRank(merged) && hypixelChecked) {
+            Object[] hypixelRes = HttpUtil.get(HYPIXEL_URL + dashless + "&key=" + hypixelKey, TIMEOUT_MS);
+            hypixelBody = (JsonWrapper) hypixelRes[0];
+            hypixelCode = (int) hypixelRes[1];
+            JsonWrapper hypixelStats = tryParseStats(hypixelBody, hypixelCode, "hypixel");
+            if (hypixelStats != null) {
+                merged = PlayerStatsParser.merge(merged, hypixelStats);
+                if (providerLabel.length() > 0) providerLabel.append("+");
+                providerLabel.append("hypixel");
+            }
+        }
+
+        if (merged != null) {
+            return new Result(merged, 200, providerLabel.toString(), false, null);
+        }
+
+        if (hypixelChecked && hypixelBody == null) {
             Object[] hypixelRes = HttpUtil.get(HYPIXEL_URL + dashless + "&key=" + hypixelKey, TIMEOUT_MS);
             hypixelBody = (JsonWrapper) hypixelRes[0];
             hypixelCode = (int) hypixelRes[1];

@@ -7,6 +7,8 @@ package com.lazify.api;
 public final class NickDetector {
 
     private static final String BORDIC_CACHE_URL =
+            "https://bordic.xyz/api/v2/resources/cache/hypixel?uuid=";
+    private static final String BORDIC_CACHE_KEY_URL =
             "https://bordic.xyz/api/v2/resources/cache/hypixel?key=";
 
     private NickDetector() {}
@@ -58,8 +60,16 @@ public final class NickDetector {
 
     public static boolean probeBordicNick(String dashlessUuid, String bordicKey) {
         if (bordicKey == null || bordicKey.isEmpty()) return true;
-        Object[] res = HttpUtil.get(BORDIC_CACHE_URL + bordicKey + "&uuid=" + dashlessUuid, 10000);
+        Object[] res = HttpUtil.get(BORDIC_CACHE_KEY_URL + bordicKey + "&uuid=" + dashlessUuid, 10000);
         return isBordicNick((JsonWrapper) res[0], dashlessUuid);
+    }
+
+    /** Bordic Hypixel cache (uuid-only; optional key when configured). */
+    public static Object[] fetchBordicCache(String dashlessUuid, String bordicKey) {
+        String url = (bordicKey != null && !bordicKey.isEmpty())
+                ? BORDIC_CACHE_KEY_URL + bordicKey + "&uuid=" + dashlessUuid
+                : BORDIC_CACHE_URL + dashlessUuid;
+        return HttpUtil.get(url, 10000);
     }
 
     /** Hypixel offline-mode UUID assigned to nicked players (version nibble != 4). */

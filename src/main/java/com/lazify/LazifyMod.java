@@ -23,7 +23,7 @@ public class LazifyMod {
 
     public static final String MODID   = "lazify";
     public static final String NAME    = "Lazify";
-    public static final String VERSION = "3.0";
+    public static final String VERSION = "260730";
 
     public static final Logger LOGGER = LogManager.getLogger(NAME);
 

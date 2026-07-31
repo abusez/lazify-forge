@@ -42,3 +42,4 @@ Thumbs.db
 src/main/resources/lazify.cfg
 run/config/
 local.properties
+api.json

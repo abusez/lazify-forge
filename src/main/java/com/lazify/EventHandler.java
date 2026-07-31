@@ -2,9 +2,11 @@ package com.lazify;
 
 import com.lazify.config.GuiClickMenu;
 import com.lazify.config.LazifyConfig;
+import com.lazify.overlay.MellowTabOverlay;
 import com.lazify.overlay.OverlayManager;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.client.Minecraft;
+import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraft.client.gui.inventory.GuiChest;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.client.gui.inventory.GuiContainer;
@@ -70,6 +72,9 @@ public class EventHandler {
             }
         }
 
+        // /ov|/lazify with no args schedules open after chat closes
+        OverlayManager.INSTANCE.tickPendingClickGui();
+
         // NoHurtCam: suppress damage camera tilt
         if (LazifyConfig.INSTANCE.isNoHurtCam() && mc.thePlayer != null) {
             mc.thePlayer.hurtTime = 0;
@@ -81,6 +86,14 @@ public class EventHandler {
             if (mc.thePlayer.isPotionActive(15)) mc.thePlayer.removePotionEffect(15); // blindness
         }
 
+        if (MellowTabOverlay.isActive() && mc.gameSettings != null
+                && mc.gameSettings.keyBindPlayerList.isKeyDown()) {
+            int wheel = Mouse.getDWheel();
+            if (wheel != 0 && mc.getNetHandler() != null) {
+                MellowTabOverlay.handleMouseWheel(wheel, mc.getNetHandler().getPlayerInfoMap().size());
+            }
+        }
+
         tickCounter++;
         if (tickCounter >= 5) {
             tickCounter = 0;
@@ -88,7 +101,20 @@ public class EventHandler {
         }
     }
 
-    /** Render after tab list + HUD so ping bars and tab text stay underneath. */
+    /** Replace vanilla tab list with Mellow extended table when that theme is active. */
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public void onRenderTabPre(RenderGameOverlayEvent.Pre event) {
+        if (event.type != RenderGameOverlayEvent.ElementType.PLAYER_LIST) return;
+        if (!MellowTabOverlay.isActive()) return;
+
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.gameSettings == null || !mc.gameSettings.keyBindPlayerList.isKeyDown()) return;
+
+        event.setCanceled(true);
+        MellowTabOverlay.render(OverlayManager.INSTANCE);
+    }
+
+    /** Render HUD overlay after tab list. */
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onRenderTick(TickEvent.RenderTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;

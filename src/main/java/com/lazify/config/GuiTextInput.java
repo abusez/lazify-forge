@@ -59,6 +59,11 @@ public class GuiTextInput extends GuiScreen {
             mc.displayGuiScreen(parent);
             return;
         }
+        if (keyCode == Keyboard.KEY_RETURN || keyCode == Keyboard.KEY_NUMPADENTER) {
+            onSave.accept(field.getText().trim());
+            mc.displayGuiScreen(parent);
+            return;
+        }
         field.textboxKeyTyped(typedChar, keyCode);
         super.keyTyped(typedChar, keyCode);
     }

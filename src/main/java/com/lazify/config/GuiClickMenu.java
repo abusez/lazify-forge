@@ -2,44 +2,65 @@ package com.lazify.config;
 
 import com.lazify.LazifyMod;
 import com.lazify.overlay.OverlayManager;
+import com.lazify.util.ColorUtil;
+import com.lazify.util.ThresholdColorScale;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.util.ChatComponentText;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 public class GuiClickMenu extends GuiScreen {
 
-    private int activeTab = 0;
+    private static final String[] TABS = {"Overlay", "Features", "Customize", "Appearance", "Columns", "API"};
+
+    /** Persists across open/close so tuning Appearance doesn't reset navigation. */
+    private static int savedActiveTab = 0;
+    private static final int[] savedScroll = new int[TABS.length];
+    private static final Set<String> savedExpanded = new HashSet<>();
+
+    private int activeTab = savedActiveTab;
     private int scrollY = 0;
     private final List<Entry> entries = new ArrayList<>();
     private int draggingIndex = -1;
-    private int colDragFromIndex = -1;
-    private int colDropIndex = -1;
-    private boolean colDragActive = false;
-    private int colDragOffsetY = 0;
+    /** Shared list-drag for Columns + color tiers. */
+    private int listDragFromVis = -1;
+    private int listDragDrop = -1;
+    private boolean listDragActive = false;
+    private int listDragOffsetY = 0;
+    private boolean listDragIsTier = false;
+    private String listDragScaleId = null;
+    private int listDragFromLocal = -1;
 
-    private static final String[] TABS = {"Overlay", "Features", "Customize", "Appearance", "Columns", "API"};
-    private static final int ROW_H = 22;
-    private static final int COL_CARD_H = 34;
-    private static final int COL_CARD_GAP = 6;
+    private static final int ROW_H = 30;
+    private static final int ROW_GAP = 4;
+    private static final int COL_CARD_H = 38;
+    private static final int COL_CARD_GAP = 8;
     private static final int COL_CARD_PAD = 8;
+    private static final int TIER_CARD_H = 36;
+    private static final int TIER_CARD_GAP = 6;
     private static final int COL_GRIP_W = 16;
-    private static final int CHILD_INDENT = 14;
+    private static final int CHILD_INDENT = 16;
     private static final int SIDEBAR_W = 70;
     private static final int HEADER_H = 24;
     private static final int HEADER_BTN_H = 16;
     private static final int HEADER_BTN_PAD = 8;
     private static final String HEADER_POS_LABEL = "Move Overlay";
-    private static final int SLIDER_W = 90;
+    private static final int SLIDER_W = 80;
+    private static final int VALUE_RESERVE = 54;
     private static final int TOGGLE_W = 20;
     private static final int TOGGLE_H = 10;
 
@@ -91,6 +112,10 @@ public class GuiClickMenu extends GuiScreen {
         float getSliderPos() { return 0; }
         void setFromSlider(float ratio) {}
         boolean hasChildren() { return !children.isEmpty(); }
+        /** Left-click expands/collapses instead of changing a value. */
+        boolean expandsOnClick() { return false; }
+        boolean hasColorSwatch() { return false; }
+        int swatchColor() { return 0xFFFFFFFF; }
         Entry addChild(Entry child) { children.add(child); return this; }
     }
 
@@ -109,8 +134,16 @@ public class GuiClickMenu extends GuiScreen {
         final Consumer<Integer> setter;
         final int min, max, step;
         final String[] names;
+        /** Optional live RGB preview: supplies {r,g,b}; channel 0/1/2 colors the slider. */
+        Supplier<int[]> rgbPreview;
+        int rgbChannel = -1;
         IntEntry(String l, String d, Supplier<Integer> g, Consumer<Integer> s, int min, int max, int step, String[] names) {
             super(l, d); getter = g; setter = s; this.min = min; this.max = max; this.step = step; this.names = names;
+        }
+        IntEntry withRgbPreview(Supplier<int[]> rgb, int channel) {
+            this.rgbPreview = rgb;
+            this.rgbChannel = channel;
+            return this;
         }
         String valueText() {
             int v = getter.get();
@@ -169,6 +202,257 @@ public class GuiClickMenu extends GuiScreen {
         }
     }
 
+    /** Expandable section header — left-click toggles children (keeps Appearance compact). */
+    private static class GroupEntry extends Entry {
+        GroupEntry(String l, String d) { super(l, d); }
+        String valueText() { return ""; }
+        void onClick(int button) { expanded = !expanded; }
+        boolean expandsOnClick() { return true; }
+    }
+
+    /** Attach Red/Green/Blue sliders with live channel + mix previews. */
+    private static void addRgbSliderChildren(Entry parent,
+                                            Supplier<Integer> rG, Consumer<Integer> rS,
+                                            Supplier<Integer> gG, Consumer<Integer> gS,
+                                            Supplier<Integer> bG, Consumer<Integer> bS) {
+        final Supplier<int[]> preview = () -> new int[]{
+                rG.get() != null ? rG.get() : 0,
+                gG.get() != null ? gG.get() : 0,
+                bG.get() != null ? bG.get() : 0
+        };
+        parent.addChild(new IntEntry("Red",   null, rG, rS, 0, 255, 1, null).withRgbPreview(preview, 0));
+        parent.addChild(new IntEntry("Green", null, gG, gS, 0, 255, 1, null).withRgbPreview(preview, 1));
+        parent.addChild(new IntEntry("Blue",  null, bG, bS, 0, 255, 1, null).withRgbPreview(preview, 2));
+    }
+
+    private static Entry rgbGroup(String name, String tip,
+                                  Supplier<Integer> rG, Consumer<Integer> rS,
+                                  Supplier<Integer> gG, Consumer<Integer> gS,
+                                  Supplier<Integer> bG, Consumer<Integer> bS) {
+        final Supplier<int[]> preview = () -> new int[]{
+                rG.get() != null ? rG.get() : 0,
+                gG.get() != null ? gG.get() : 0,
+                bG.get() != null ? bG.get() : 0
+        };
+        Entry g = new GroupEntry(name, tip) {
+            @Override String valueText() { return ""; }
+            @Override boolean hasColorSwatch() { return true; }
+            @Override int swatchColor() {
+                int[] rgb = preview.get();
+                return ColorUtil.rgb(rgb[0], rgb[1], rgb[2]);
+            }
+        };
+        addRgbSliderChildren(g, rG, rS, gG, gS, bG, bS);
+        return g;
+    }
+
+    private static Entry rgbaGroup(String name, String tip,
+                                   Supplier<Integer> rG, Consumer<Integer> rS,
+                                   Supplier<Integer> gG, Consumer<Integer> gS,
+                                   Supplier<Integer> bG, Consumer<Integer> bS,
+                                   Supplier<Integer> aG, Consumer<Integer> aS) {
+        return rgbaGroup(name, tip, "Alpha", rG, rS, gG, gS, bG, bS, aG, aS);
+    }
+
+    private static Entry rgbaGroup(String name, String tip, String alphaLabel,
+                                   Supplier<Integer> rG, Consumer<Integer> rS,
+                                   Supplier<Integer> gG, Consumer<Integer> gS,
+                                   Supplier<Integer> bG, Consumer<Integer> bS,
+                                   Supplier<Integer> aG, Consumer<Integer> aS) {
+        Entry g = rgbGroup(name, tip, rG, rS, gG, gS, bG, bS);
+        g.addChild(new IntEntry(alphaLabel, null, aG, aS, 0, 255, 1, null));
+        return g;
+    }
+
+    private static Entry headerRgbGroup(final LazifyConfig c, final String colKey, String tip) {
+        return rgbGroup(LazifyConfig.headerLabelForKey(colKey), tip,
+            () -> c.getHeaderR(colKey), v -> c.setHeaderR(colKey, v),
+            () -> c.getHeaderG(colKey), v -> c.setHeaderG(colKey, v),
+            () -> c.getHeaderB(colKey), v -> c.setHeaderB(colKey, v));
+    }
+
+    private static Entry highlightModule(String name, String tip,
+                                         Supplier<Boolean> enG, Consumer<Boolean> enS,
+                                         Supplier<Integer> rG, Consumer<Integer> rS,
+                                         Supplier<Integer> gG, Consumer<Integer> gS,
+                                         Supplier<Integer> bG, Consumer<Integer> bS,
+                                         Supplier<Integer> aG, Consumer<Integer> aS,
+                                         final Supplier<Integer> packed) {
+        Entry root = new BoolEntry(name, tip, enG, enS) {
+            @Override boolean hasColorSwatch() { return true; }
+            @Override int swatchColor() { return packed.get(); }
+        };
+        addRgbSliderChildren(root, rG, rS, gG, gS, bG, bS);
+        root.addChild(new IntEntry("Opacity", null, aG, aS, 0, 255, 1, null));
+        return root;
+    }
+
+    private void guiChat(String msg) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer != null) {
+            mc.thePlayer.addChatMessage(new ChatComponentText(OverlayManager.PREFIX + msg));
+        }
+    }
+
+    private Entry buildPresetsModule() {
+        final GuiClickMenu self = this;
+        Entry presets = new GroupEntry("Presets", "Save, load, or reset appearance packs");
+        presets.addChild(new ActionEntry("Save Preset", "Save appearance pack and show the file path", () ->
+            Minecraft.getMinecraft().displayGuiScreen(new GuiTextInput(self, "Save Preset",
+                "Name (letters, numbers, _ -)", "", name -> {
+                    try {
+                        AppearancePreset.save(LazifyConfig.INSTANCE.getConfigDir(), name);
+                        File f = AppearancePreset.fileFor(LazifyConfig.INSTANCE.getConfigDir(), name);
+                        guiChat("\u00a7aSaved to \u00a7e" + (f != null ? f.getAbsolutePath() : AppearancePreset.sanitizeName(name)));
+                        persistUiState();
+                        buildEntries();
+                        clampScroll();
+                    } catch (Exception e) {
+                        guiChat("\u00a7cSave failed: \u00a7e" + e.getMessage());
+                    }
+                }))));
+        presets.addChild(new ActionEntry("Reset Appearance", "Restore default colors / layout / scales", () -> {
+            LazifyConfig.INSTANCE.resetAppearance();
+            LazifyConfig.INSTANCE.save();
+            OverlayManager.INSTANCE.defaultSettings();
+            guiChat("\u00a7aAppearance reset to defaults");
+            persistUiState();
+            buildEntries();
+            clampScroll();
+        }));
+        presets.addChild(new ActionEntry("Open Folder", "Open the presets directory in Explorer", () -> {
+            try {
+                File dir = AppearancePreset.presetsDir(LazifyConfig.INSTANCE.getConfigDir());
+                AppearancePreset.openFolder(LazifyConfig.INSTANCE.getConfigDir());
+                guiChat("\u00a7aOpened \u00a7e" + dir.getAbsolutePath());
+            } catch (Exception e) {
+                guiChat("\u00a7cCould not open folder: \u00a7e" + e.getMessage());
+            }
+        }));
+        Entry load = new GroupEntry("Load", "Apply a saved preset");
+        List<String> names = AppearancePreset.listNames(LazifyConfig.INSTANCE.getConfigDir());
+        if (names.isEmpty()) {
+            load.addChild(new GroupEntry("(none saved)", "Use Save Preset first"));
+        } else {
+            for (final String n : names) {
+                Entry item = new GroupEntry(n, "Load or delete this preset");
+                item.addChild(new ActionEntry("Load", "Apply " + n, () -> {
+                    try {
+                        AppearancePreset.load(LazifyConfig.INSTANCE.getConfigDir(), n);
+                        OverlayManager.INSTANCE.defaultSettings();
+                        guiChat("\u00a7aLoaded preset \u00a7e" + n);
+                        persistUiState();
+                        buildEntries();
+                        clampScroll();
+                    } catch (Exception e) {
+                        guiChat("\u00a7cLoad failed: \u00a7e" + e.getMessage());
+                    }
+                }));
+                item.addChild(new ActionEntry("Delete", "Remove " + n + " from disk", () -> {
+                    if (AppearancePreset.delete(LazifyConfig.INSTANCE.getConfigDir(), n)) {
+                        guiChat("\u00a7eDeleted preset \u00a7c" + n);
+                    } else {
+                        guiChat("\u00a7cCould not delete \u00a7e" + n);
+                    }
+                    persistUiState();
+                    buildEntries();
+                    clampScroll();
+                }));
+                load.addChild(item);
+            }
+        }
+        presets.addChild(load);
+        return presets;
+    }
+
+    private Entry buildScaleModule(String name, String tip, final String scaleId,
+                                   Supplier<Boolean> enG, Consumer<Boolean> enS,
+                                   Supplier<ThresholdColorScale> scaleG, Consumer<ThresholdColorScale> scaleS,
+                                   double minBound, double maxBound, double step, String unit) {
+        Entry root = new BoolEntry(name, tip, enG, enS);
+        final ThresholdColorScale scale = scaleG.get();
+        for (int i = 0; i < scale.size(); i++) {
+            final int idx = i;
+            TierEntry tier = new TierEntry("Tier " + (i + 1), scaleId, idx, scaleG, scaleS);
+            tier.addChild(new DblEntry("Min", unit.isEmpty() ? "Minimum value for this color" : "Minimum (" + unit + ")",
+                    () -> scaleG.get().get(idx).min,
+                    v -> {
+                        ThresholdColorScale s = scaleG.get();
+                        ThresholdColorScale.Tier nt = s.get(idx).copy();
+                        nt.min = v;
+                        s.set(idx, nt);
+                        scaleS.accept(s);
+                    }, minBound, maxBound, step));
+            tier.addChild(rgbGroup("Color", "RGB for this tier",
+                    () -> scaleG.get().get(idx).r, v -> updateTierChannel(scaleG, scaleS, idx, 0, v),
+                    () -> scaleG.get().get(idx).g, v -> updateTierChannel(scaleG, scaleS, idx, 1, v),
+                    () -> scaleG.get().get(idx).b, v -> updateTierChannel(scaleG, scaleS, idx, 2, v)));
+            if (scale.size() > 1) {
+                tier.addChild(new ActionEntry("Remove Tier", "Delete this threshold", () -> {
+                    ThresholdColorScale s = scaleG.get();
+                    s.remove(idx);
+                    scaleS.accept(s);
+                    LazifyConfig.INSTANCE.save();
+                    persistUiState();
+                    buildEntries();
+                    clampScroll();
+                }));
+            }
+            root.addChild(tier);
+        }
+        root.addChild(new ActionEntry("+ Add Tier", "Add another threshold", () -> {
+            ThresholdColorScale s = scaleG.get();
+            double nextMin = s.size() == 0 ? 0 : s.get(s.size() - 1).min + step;
+            if (nextMin > maxBound) nextMin = maxBound;
+            s.add(new ThresholdColorScale.Tier(nextMin, 255, 255, 255));
+            scaleS.accept(s);
+            LazifyConfig.INSTANCE.save();
+            persistUiState();
+            buildEntries();
+            clampScroll();
+        }));
+        return root;
+    }
+
+    /** Draggable color-tier card (same interaction model as column cards). */
+    private class TierEntry extends Entry {
+        final String scaleId;
+        final int tierIndex;
+        final Supplier<ThresholdColorScale> scaleG;
+        final Consumer<ThresholdColorScale> scaleS;
+
+        TierEntry(String label, String scaleId, int tierIndex,
+                  Supplier<ThresholdColorScale> scaleG, Consumer<ThresholdColorScale> scaleS) {
+            super(label, "Drag to reorder");
+            this.scaleId = scaleId;
+            this.tierIndex = tierIndex;
+            this.scaleG = scaleG;
+            this.scaleS = scaleS;
+        }
+
+        String valueText() { return ""; }
+        void onClick(int button) { expanded = !expanded; }
+        boolean expandsOnClick() { return false; }
+        boolean hasColorSwatch() { return true; }
+        int swatchColor() {
+            ThresholdColorScale s = scaleG.get();
+            if (tierIndex < 0 || tierIndex >= s.size()) return 0xFFFFFFFF;
+            return s.get(tierIndex).argb();
+        }
+    }
+
+    private void updateTierChannel(Supplier<ThresholdColorScale> scaleG, Consumer<ThresholdColorScale> scaleS,
+                                   int idx, int channel, int value) {
+        ThresholdColorScale s = scaleG.get();
+        ThresholdColorScale.Tier nt = s.get(idx).copy();
+        if (channel == 0) nt.r = value;
+        else if (channel == 1) nt.g = value;
+        else nt.b = value;
+        s.set(idx, nt);
+        scaleS.accept(s);
+    }
+
+
     private static class ActionEntry extends Entry {
         final Runnable action;
         ActionEntry(String l, String d, Runnable a) { super(l, d); action = a; }
@@ -218,16 +502,113 @@ public class GuiClickMenu extends GuiScreen {
 
     @Override
     public void initGui() {
-        pw = Math.min(380, width - 40);
-        ph = Math.min(height - 30, 280);
+        activeTab = savedActiveTab;
+        if (activeTab < 0 || activeTab >= TABS.length) activeTab = 0;
+        pw = Math.min(420, width - 40);
+        ph = Math.min(height - 30, 320);
         px = (width - pw) / 2;
         py = (height - ph) / 2;
         contentX = px + SIDEBAR_W;
         contentY = py + HEADER_H;
         contentW = pw - SIDEBAR_W;
         contentH = ph - HEADER_H;
-        scrollY = 0;
         buildEntries();
+        scrollY = savedScroll[activeTab];
+        clampScroll();
+    }
+
+    @Override
+    public void onGuiClosed() {
+        persistUiState();
+        super.onGuiClosed();
+    }
+
+    private void persistUiState() {
+        savedActiveTab = activeTab;
+        savedScroll[activeTab] = scrollY;
+        String prefix = TABS[activeTab] + "/";
+        Iterator<String> it = savedExpanded.iterator();
+        while (it.hasNext()) {
+            if (it.next().startsWith(prefix)) it.remove();
+        }
+        collectExpanded(entries, TABS[activeTab], savedExpanded);
+    }
+
+    private void collectExpanded(List<Entry> list, String pathPrefix, Set<String> out) {
+        for (Entry e : list) {
+            String path = pathPrefix + "/" + e.label;
+            if (e.expanded) out.add(path);
+            if (!e.children.isEmpty()) collectExpanded(e.children, path, out);
+        }
+    }
+
+    private void applyExpanded(List<Entry> list, String pathPrefix) {
+        for (Entry e : list) {
+            String path = pathPrefix + "/" + e.label;
+            e.expanded = savedExpanded.contains(path);
+            if (!e.children.isEmpty()) applyExpanded(e.children, path);
+        }
+    }
+
+    private void clampScroll() {
+        int maxScroll = Math.max(0, totalVisibleHeight() - contentH);
+        scrollY = Math.max(0, Math.min(scrollY, maxScroll));
+    }
+
+    /** Rebuild Appearance when theme changes so Mellow Colors show/hide. */
+    private void maybeRefreshAppearance(Entry e) {
+        if (activeTab != 3 || e == null) return;
+        if (!"Overlay Theme".equals(e.label)) return;
+        persistUiState();
+        buildEntries();
+        clampScroll();
+    }
+
+    /** Right-click a slider → type an exact number (clamped to its min/max). */
+    private void openNumberInput(Entry e) {
+        persistUiState();
+        final GuiClickMenu self = this;
+        if (e instanceof IntEntry) {
+            final IntEntry ie = (IntEntry) e;
+            String hint = "Integer " + ie.min + " – " + ie.max + "  (Enter to save)";
+            if (ie.names != null) {
+                hint = "Index " + ie.min + " – " + ie.max + "  (Enter to save)";
+            }
+            Minecraft.getMinecraft().displayGuiScreen(new GuiTextInput(
+                    self, ie.label, hint, String.valueOf(ie.getter.get()),
+                    text -> {
+                        try {
+                            int v = Integer.parseInt(text.trim());
+                            v = Math.max(ie.min, Math.min(ie.max, v));
+                            // Snap to step
+                            v = Math.round((float) (v - ie.min) / ie.step) * ie.step + ie.min;
+                            v = Math.max(ie.min, Math.min(ie.max, v));
+                            ie.setter.accept(v);
+                            LazifyConfig.INSTANCE.save();
+                            OverlayManager.INSTANCE.defaultSettings();
+                            maybeRefreshAppearance(ie);
+                        } catch (NumberFormatException ignored) { }
+                    }));
+            return;
+        }
+        if (e instanceof DblEntry) {
+            final DblEntry de = (DblEntry) e;
+            Minecraft.getMinecraft().displayGuiScreen(new GuiTextInput(
+                    self, de.label,
+                    "Number " + de.min + " – " + de.max + "  (Enter to save)",
+                    String.valueOf(de.getter.get()),
+                    text -> {
+                        try {
+                            double v = Double.parseDouble(text.trim());
+                            v = Math.max(de.min, Math.min(de.max, v));
+                            v = Math.round(v / de.step) * de.step;
+                            v = Math.max(de.min, Math.min(de.max, Math.round(v * 1000.0) / 1000.0));
+                            de.setter.accept(v);
+                            LazifyConfig.INSTANCE.save();
+                            OverlayManager.INSTANCE.defaultSettings();
+                        } catch (NumberFormatException ignored) { }
+                    }));
+        }
     }
 
     private void buildEntries() {
@@ -243,6 +624,7 @@ public class GuiClickMenu extends GuiScreen {
                 entries.add(new BoolEntry("Remove Final Kill", "Remove players on final kill", c::isRemoveFinalKill, c::setRemoveFinalKill));
                 Entry autoTab = new BoolEntry("Auto Tablist", "Auto-add tablist players", c::isAutoTablist, c::setAutoTablist);
                 autoTab.addChild(new BoolEntry("Clear on /who", "Clear overlay on /who", c::isClearOnWho, c::setClearOnWho));
+                autoTab.addChild(new BoolEntry("Disable in Lobby", "Skip auto-add + chat alerts in main BW lobby", c::isDisableInLobby, c::setDisableInLobby));
                 entries.add(autoTab);
                 break;
             }
@@ -253,6 +635,9 @@ public class GuiClickMenu extends GuiScreen {
                 autoWho.addChild(new DblEntry("Delay", "Seconds before sending /who", c::getWhoDelay, c::setWhoDelay, 0.0, 10.0, 0.5));
                 autoWho.addChild(new BoolEntry("Hide /who", "Hide ONLINE: message from chat", c::isHideWho, c::setHideWho));
                 entries.add(autoWho);
+                Entry autoPl = new BoolEntry("Auto /pl", "Auto send /pl for party detection", c::isAutoPl, c::setAutoPl);
+                autoPl.addChild(new BoolEntry("Hide /pl", "Hide party list from auto /pl in chat", c::isHidePl, c::setHidePl));
+                entries.add(autoPl);
                 Entry dodge = new BoolEntry("Dodge Warning", "Warn if lobby is sweaty", c::isDodgeWarning, c::setDodgeWarning);
                 dodge.addChild(new DblEntry("Threshold", "Avg FKDR to trigger", c::getDodgeThreshold, c::setDodgeThreshold, 0.5, 20.0, 0.5));
                 entries.add(dodge);
@@ -294,26 +679,164 @@ public class GuiClickMenu extends GuiScreen {
                 break;
             }
             case 3: { // Appearance
-                Entry theme = new IntEntry("Overlay Theme", "Visual style for the overlay", c::getOverlayTheme, c::setOverlayTheme, 0, 1, 1,
-                    new String[]{"Default", "Nerdify"});
-                entries.add(theme);
-                entries.add(new IntEntry("Column Gap", "Horizontal space between columns", c::getOverlayColGap, c::setOverlayColGap, 0, 40, 1, null));
-                entries.add(new IntEntry("Row Gap", "Vertical space between rows", c::getOverlayRowGap, c::setOverlayRowGap, 0, 20, 1, null));
-                entries.add(new IntEntry("Scale", "Overlay size (100 = normal)", c::getOverlayScalePercent, c::setOverlayScalePercent, 50, 200, 5, null));
-                Entry bg = new IntEntry("BG Opacity", null, c::getBgOpacity, c::setBgOpacity, 0, 255, 10, null);
-                bg.addChild(new IntEntry("BG Hue", null, c::getBgHue, c::setBgHue, 0, 360, 10, null));
-                bg.addChild(new IntEntry("Header Hue", null, c::getHeaderHue, c::setHeaderHue, 0, 360, 10, null));
-                bg.addChild(new IntEntry("Border Hue", null, c::getBorderHue, c::setBorderHue, 0, 360, 10, null));
-                entries.add(bg);
-                Entry fkdr = new BoolEntry("FKDR Colors", "Color-code FKDR values", c::isFkdrColors, c::setFkdrColors);
-                fkdr.addChild(new ColorEntry("< 1.4", null, c::getFkdrColor1, c::setFkdrColor1));
-                fkdr.addChild(new ColorEntry("1.4 - 2.4", null, c::getFkdrColor2, c::setFkdrColor2));
-                fkdr.addChild(new ColorEntry("2.4 - 5", null, c::getFkdrColor3, c::setFkdrColor3));
-                fkdr.addChild(new ColorEntry("5 - 10", null, c::getFkdrColor4, c::setFkdrColor4));
-                fkdr.addChild(new ColorEntry("10 - 100", null, c::getFkdrColor5, c::setFkdrColor5));
-                fkdr.addChild(new ColorEntry("100 - 1k", null, c::getFkdrColor6, c::setFkdrColor6));
-                fkdr.addChild(new ColorEntry("1000+", null, c::getFkdrColor7, c::setFkdrColor7));
-                entries.add(fkdr);
+                // Top-level actions / packs
+                entries.add(buildPresetsModule());
+
+                Entry layout = new GroupEntry("Layout", "Theme, spacing, text, and number format");
+                layout.addChild(new IntEntry("Overlay Theme", "Lazify HUD, Nerdify HUD, or Mellow tab stats",
+                    c::getOverlayTheme, c::setOverlayTheme, 0, 2, 1,
+                    new String[]{"Lazify", "Nerdify", "Mellow"}));
+                layout.addChild(new IntEntry("Column Gap", "Horizontal space between columns", c::getOverlayColGap, c::setOverlayColGap, 0, 40, 1, null));
+                layout.addChild(new IntEntry("Row Gap", "Vertical space between rows", c::getOverlayRowGap, c::setOverlayRowGap, 0, 20, 1, null));
+                layout.addChild(new IntEntry("Padding", "Equal inset on all four sides (headers + rows)", c::getOverlayPad, c::setOverlayPad, 0, 24, 1, null));
+                layout.addChild(new IntEntry("Scale", "Overlay size (100 = normal)", c::getOverlayScalePercent, c::setOverlayScalePercent, 50, 200, 5, null));
+                layout.addChild(new BoolEntry("Text Shadow", "Drop shadow on overlay text", c::isTextShadow, c::setTextShadow));
+                layout.addChild(new BoolEntry("Header Bold", "Bold column header labels", c::isHeaderBold, c::setHeaderBold));
+                Entry numbers = new GroupEntry("Number Format", "How stats are displayed");
+                numbers.addChild(new IntEntry("FKDR Decimals", "Decimal places for FKDR/WLR/BBLR/KDR",
+                    c::getFkdrDecimals, c::setFkdrDecimals, 0, 3, 1, null));
+                numbers.addChild(new BoolEntry("Abbreviate", "1200 → 1.2k for stars / encounters / level",
+                    c::isAbbreviateNumbers, c::setAbbreviateNumbers));
+                numbers.addChild(new IntEntry("Ping Style", null, c::getPingStyle, c::setPingStyle, 0, 1, 1,
+                    new String[]{"Number", "With ms"}));
+                layout.addChild(numbers);
+                entries.add(layout);
+
+                Entry panel = new GroupEntry("Panel", "Background, corners, and outline");
+                panel.addChild(rgbaGroup("Background", "Overlay background RGB + opacity", "Opacity",
+                    c::getBgR, c::setBgR, c::getBgG, c::setBgG, c::getBgB, c::setBgB,
+                    c::getBgOpacity, c::setBgOpacity));
+                panel.addChild(new IntEntry("Corner Radius", "Rounds background corners (works without outline)",
+                    c::getBorderRadius, c::setBorderRadius, 0, 16, 1, null));
+                Entry outline = new BoolEntry("Outline", "Border drawn outside the rounded background",
+                        c::isOutlineEnabled, c::setOutlineEnabled) {
+                    @Override boolean hasColorSwatch() { return true; }
+                    @Override int swatchColor() {
+                        if (LazifyConfig.INSTANCE.isOutlineChroma()) {
+                            return ColorUtil.getChroma(1L, 255);
+                        }
+                        return LazifyConfig.INSTANCE.getOutlineColor();
+                    }
+                };
+                outline.addChild(new BoolEntry("Chroma", "Rainbow outline (ignores RGB below)", c::isOutlineChroma, c::setOutlineChroma));
+                outline.addChild(new DblEntry("Thickness", "Outline stroke width",
+                    () -> (double) c.getOutlineWidth(), c::setOutlineWidth, 0.5, 8.0, 0.5));
+                addRgbSliderChildren(outline, c::getOutlineR, c::setOutlineR, c::getOutlineG, c::setOutlineG,
+                        c::getOutlineB, c::setOutlineB);
+                panel.addChild(outline);
+                entries.add(panel);
+
+                Entry rows = new GroupEntry("Rows", "Stripes and role highlights");
+                Entry stripes = new BoolEntry("Row Stripes", "Alternating row tint",
+                        c::isStripeEnabled, c::setStripeEnabled) {
+                    @Override boolean hasColorSwatch() { return true; }
+                    @Override int swatchColor() { return LazifyConfig.INSTANCE.getStripeColor(); }
+                };
+                addRgbSliderChildren(stripes, c::getStripeR, c::setStripeR, c::getStripeG, c::setStripeG,
+                        c::getStripeB, c::setStripeB);
+                stripes.addChild(new IntEntry("Opacity", null, c::getStripeA, c::setStripeA, 0, 255, 1, null));
+                rows.addChild(stripes);
+                Entry highlights = new GroupEntry("Highlights", "Tint by role (self > party > tagged > nick)");
+                highlights.addChild(highlightModule("Self", "Tint your own row",
+                    c::isHighlightSelf, c::setHighlightSelf,
+                    c::getHighlightSelfR, c::setHighlightSelfR, c::getHighlightSelfG, c::setHighlightSelfG,
+                    c::getHighlightSelfB, c::setHighlightSelfB, c::getHighlightSelfA, c::setHighlightSelfA,
+                    c::getHighlightSelfColor));
+                highlights.addChild(highlightModule("Party", "Tint party members",
+                    c::isHighlightParty, c::setHighlightParty,
+                    c::getHighlightPartyR, c::setHighlightPartyR, c::getHighlightPartyG, c::setHighlightPartyG,
+                    c::getHighlightPartyB, c::setHighlightPartyB, c::getHighlightPartyA, c::setHighlightPartyA,
+                    c::getHighlightPartyColor));
+                highlights.addChild(highlightModule("Nicked", "Tint unresolved nicks",
+                    c::isHighlightNicked, c::setHighlightNicked,
+                    c::getHighlightNickedR, c::setHighlightNickedR, c::getHighlightNickedG, c::setHighlightNickedG,
+                    c::getHighlightNickedB, c::setHighlightNickedB, c::getHighlightNickedA, c::setHighlightNickedA,
+                    c::getHighlightNickedColor));
+                highlights.addChild(highlightModule("Tagged", "Tint cheater-tagged rows",
+                    c::isHighlightTagged, c::setHighlightTagged,
+                    c::getHighlightTaggedR, c::setHighlightTaggedR, c::getHighlightTaggedG, c::setHighlightTaggedG,
+                    c::getHighlightTaggedB, c::setHighlightTaggedB, c::getHighlightTaggedA, c::setHighlightTaggedA,
+                    c::getHighlightTaggedColor));
+                rows.addChild(highlights);
+                entries.add(rows);
+
+                Entry headers = new GroupEntry("Header Colors", "Colors for enabled column tags");
+                headers.addChild(rgbGroup("All", "Apply RGB to every header at once",
+                    c::getHeaderAllR, c::setHeaderAllR,
+                    c::getHeaderAllG, c::setHeaderAllG,
+                    c::getHeaderAllB, c::setHeaderAllB));
+                String[] colOrd = c.getColOrder().split(",");
+                Set<String> listed = new HashSet<>();
+                for (String colName : colOrd) {
+                    colName = colName.trim();
+                    if (colName.isEmpty() || !c.isColumnEnabledByName(colName)) continue;
+                    String key = LazifyConfig.colNameToKey(colName);
+                    if (!listed.add(key)) continue;
+                    headers.addChild(headerRgbGroup(c, key, "[" + LazifyConfig.headerLabelForKey(key).toUpperCase() + "] header RGB"));
+                }
+                for (String key : LazifyConfig.HEADER_COL_KEYS) {
+                    if (listed.contains(key)) continue;
+                    String name = key;
+                    if ("player".equals(key)) name = "username";
+                    else if ("seen".equals(key)) name = "encounters";
+                    else if ("netlevel".equals(key)) name = "level";
+                    if (!c.isColumnEnabledByName(name)) continue;
+                    headers.addChild(headerRgbGroup(c, key, "[" + LazifyConfig.headerLabelForKey(key).toUpperCase() + "] header RGB"));
+                }
+                entries.add(headers);
+
+                // Stat threshold colors — only for enabled columns
+                Entry statColors = new GroupEntry("Stat Colors", "Threshold RGB for enabled columns");
+                boolean anyStatColor = false;
+                if (c.isColFkdr() || c.isColWlr() || c.isColBblr() || c.isColKdr()) {
+                    statColors.addChild(buildScaleModule("FKDR Colors", "FKDR / WLR / BBLR / KDR tiers (RGB)", "fkdr",
+                            c::isFkdrColors, c::setFkdrColors, c::getFkdrScale, c::setFkdrScale,
+                            0, 2000, 0.1, ""));
+                    anyStatColor = true;
+                }
+                if (c.isColWinstreaks()) {
+                    statColors.addChild(buildScaleModule("WS Colors", "Winstreak color tiers", "ws",
+                            c::isWsColors, c::setWsColors, c::getWsScale, c::setWsScale,
+                            0, 2000, 1, ""));
+                    anyStatColor = true;
+                }
+                if (c.isColPing()) {
+                    statColors.addChild(buildScaleModule("Ping Colors", "Ping tiers (ms)", "ping",
+                            c::isPingColors, c::setPingColors, c::getPingScale, c::setPingScale,
+                            0, 500, 1, "ms"));
+                    anyStatColor = true;
+                }
+                if (c.isColSession()) {
+                    statColors.addChild(buildScaleModule("Session Colors", "Session length tiers (minutes)", "session",
+                            c::isSessionColors, c::setSessionColors, c::getSessionScale, c::setSessionScale,
+                            0, 600, 0.5, "m"));
+                    anyStatColor = true;
+                }
+                if (c.isColEncounters()) {
+                    statColors.addChild(buildScaleModule("Encounter Colors", "Times-seen tiers", "encounters",
+                            c::isEncountersColors, c::setEncountersColors, c::getEncountersScale, c::setEncountersScale,
+                            0, 50, 1, ""));
+                    anyStatColor = true;
+                }
+                if (anyStatColor) entries.add(statColors);
+
+                if (c.getOverlayTheme() == 2) {
+                    Entry mellow = new GroupEntry("Mellow Colors", "Tab panel colors");
+                    mellow.addChild(rgbaGroup("Outer", "Outer panel",
+                        c::getMellowOuterR, c::setMellowOuterR, c::getMellowOuterG, c::setMellowOuterG,
+                        c::getMellowOuterB, c::setMellowOuterB, c::getMellowOuterA, c::setMellowOuterA));
+                    mellow.addChild(rgbaGroup("Header Row", "Header background",
+                        c::getMellowHeaderR, c::setMellowHeaderR, c::getMellowHeaderG, c::setMellowHeaderG,
+                        c::getMellowHeaderB, c::setMellowHeaderB, c::getMellowHeaderA, c::setMellowHeaderA));
+                    mellow.addChild(rgbaGroup("Player Row", "Normal row background",
+                        c::getMellowRowR, c::setMellowRowR, c::getMellowRowG, c::setMellowRowG,
+                        c::getMellowRowB, c::setMellowRowB, c::getMellowRowA, c::setMellowRowA));
+                    mellow.addChild(rgbaGroup("Tagged Row", "Row with cheater tags",
+                        c::getMellowTaggedR, c::setMellowTaggedR, c::getMellowTaggedG, c::setMellowTaggedG,
+                        c::getMellowTaggedB, c::setMellowTaggedB, c::getMellowTaggedA, c::setMellowTaggedA));
+                    entries.add(mellow);
+                }
+
                 final GuiClickMenu self = this;
                 entries.add(new ActionEntry("Drag Position", "Reposition the overlay", () ->
                     Minecraft.getMinecraft().displayGuiScreen(new GuiOverlayPosition(self))));
@@ -327,6 +850,9 @@ public class GuiClickMenu extends GuiScreen {
                 colMap.put("rank",       new ColEntry("Rank",       "rank",       c::isColRank,       c::setColRank));
                 colMap.put("star",       new ColEntry("Star",       "star",       c::isColStar,       c::setColStar));
                 colMap.put("fkdr",       new ColEntry("FKDR",       "fkdr",       c::isColFkdr,       c::setColFkdr));
+                colMap.put("wlr",        new ColEntry("WLR",        "wlr",        c::isColWlr,        c::setColWlr));
+                colMap.put("bblr",       new ColEntry("BBLR",       "bblr",       c::isColBblr,       c::setColBblr));
+                colMap.put("kdr",        new ColEntry("KDR",        "kdr",        c::isColKdr,        c::setColKdr));
                 colMap.put("winstreaks", new ColEntry("Winstreaks", "winstreaks", c::isColWinstreaks, c::setColWinstreaks));
                 colMap.put("urchin",     new ColEntry("Tags",       "urchin",     c::isColUrchin,     c::setColUrchin));
                 colMap.put("session",    new ColEntry("Session",    "session",    c::isColSession,    c::setColSession));
@@ -351,6 +877,7 @@ public class GuiClickMenu extends GuiScreen {
                 break;
             }
         }
+        applyExpanded(entries, TABS[activeTab]);
         rebuildVisible();
     }
 
@@ -359,12 +886,19 @@ public class GuiClickMenu extends GuiScreen {
     }
 
     private int visibleRowHeight(int index) {
-        if (isColumnsTab()) return COL_CARD_H + COL_CARD_GAP;
-        return ROW_H;
+        if (index < 0 || index >= visibleRows.size()) return ROW_H + ROW_GAP;
+        Entry e = visibleRows.get(index).entry;
+        if (e instanceof ColEntry) return COL_CARD_H + COL_CARD_GAP;
+        if (e instanceof TierEntry) return TIER_CARD_H + TIER_CARD_GAP;
+        return ROW_H + ROW_GAP;
     }
 
     private int visibleRowBodyHeight(int index) {
-        return isColumnsTab() ? COL_CARD_H : ROW_H;
+        if (index < 0 || index >= visibleRows.size()) return ROW_H;
+        Entry e = visibleRows.get(index).entry;
+        if (e instanceof ColEntry) return COL_CARD_H;
+        if (e instanceof TierEntry) return TIER_CARD_H;
+        return ROW_H;
     }
 
     private int visibleRowY(int index) {
@@ -396,6 +930,24 @@ public class GuiClickMenu extends GuiScreen {
         return visibleRows.size();
     }
 
+    /** Drop index among TierEntry cards of the same scale (0..count). */
+    private int computeTierDropIndex(int mouseY, String scaleId) {
+        List<Integer> tierVis = new ArrayList<>();
+        for (int i = 0; i < visibleRows.size(); i++) {
+            Entry e = visibleRows.get(i).entry;
+            if (e instanceof TierEntry && scaleId.equals(((TierEntry) e).scaleId)) {
+                tierVis.add(i);
+            }
+        }
+        for (int local = 0; local < tierVis.size(); local++) {
+            int vi = tierVis.get(local);
+            int ry = visibleRowY(vi);
+            int h = visibleRowBodyHeight(vi);
+            if (mouseY < ry + h / 2) return local;
+        }
+        return tierVis.size();
+    }
+
     private void saveColOrderFromEntries() {
         StringBuilder sb = new StringBuilder();
         for (Entry e : entries) {
@@ -419,6 +971,24 @@ public class GuiClickMenu extends GuiScreen {
         rebuildVisible();
     }
 
+    private void applyTierReorder(int fromLocal, int toLocal, String scaleId) {
+        TierEntry sample = null;
+        for (VisibleRow vr : visibleRows) {
+            if (vr.entry instanceof TierEntry && scaleId.equals(((TierEntry) vr.entry).scaleId)) {
+                sample = (TierEntry) vr.entry;
+                break;
+            }
+        }
+        if (sample == null) return;
+        ThresholdColorScale s = sample.scaleG.get();
+        s.move(fromLocal, toLocal);
+        sample.scaleS.accept(s);
+        LazifyConfig.INSTANCE.save();
+        persistUiState();
+        buildEntries();
+        clampScroll();
+    }
+
     private void drawColGrip(int x, int cy) {
         int dotColor = 0xFF606070;
         for (int row = 0; row < 3; row++) {
@@ -428,6 +998,16 @@ public class GuiClickMenu extends GuiScreen {
                 Gui.drawRect(dx, dy, dx + 2, dy + 2, dotColor);
             }
         }
+    }
+
+    private String ellipsize(String s, int maxW) {
+        if (s == null || s.isEmpty()) return "";
+        if (fontRendererObj.getStringWidth(s) <= maxW) return s;
+        String out = s;
+        while (out.length() > 0 && fontRendererObj.getStringWidth(out + "...") > maxW) {
+            out = out.substring(0, out.length() - 1);
+        }
+        return out.isEmpty() ? "..." : out + "...";
     }
 
     private void drawColCard(int cardX, int cardY, int cardW, ColEntry e, boolean hover, boolean dragging) {
@@ -442,10 +1022,34 @@ public class GuiClickMenu extends GuiScreen {
         drawColGrip(cardX + 6, cardY + cardH / 2);
 
         int labelX = cardX + COL_GRIP_W + 10;
-        fontRendererObj.drawStringWithShadow(e.label, labelX, cardY + 8, COL_TEXT);
-        fontRendererObj.drawStringWithShadow(e.desc, labelX, cardY + 19, COL_TEXT_DIM);
+        int maxTextW = cardW - COL_GRIP_W - TOGGLE_W - 28;
+        fontRendererObj.drawStringWithShadow(ellipsize(e.label, maxTextW), labelX, cardY + 9, COL_TEXT);
+        fontRendererObj.drawStringWithShadow(ellipsize(e.desc, maxTextW), labelX, cardY + 21, COL_TEXT_DIM);
 
         drawToggle(cardX + cardW - TOGGLE_W - 8, cardY + (cardH - TOGGLE_H) / 2, e.isOn());
+    }
+
+    private void drawTierCard(int cardX, int cardY, int cardW, TierEntry e, boolean hover, boolean dragging) {
+        int cardH = TIER_CARD_H;
+        int bg = dragging ? 0x28000000 : (hover ? 0x22FFFFFF : 0x14FFFFFF);
+        Gui.drawRect(cardX, cardY, cardX + cardW, cardY + cardH, bg);
+        Gui.drawRect(cardX, cardY, cardX + cardW, cardY + 1, 0x30FFFFFF);
+        Gui.drawRect(cardX, cardY + cardH - 1, cardX + cardW, cardY + cardH, 0x18FFFFFF);
+        Gui.drawRect(cardX, cardY, cardX + 1, cardY + cardH, 0x18FFFFFF);
+        Gui.drawRect(cardX + cardW - 1, cardY, cardX + cardW, cardY + cardH, 0x18FFFFFF);
+
+        drawColGrip(cardX + 6, cardY + cardH / 2);
+
+        String arrow = e.expanded ? "\u25BC" : "\u25B6";
+        fontRendererObj.drawStringWithShadow(arrow, cardX + COL_GRIP_W + 6, cardY + 13, COL_EXPAND_ARROW);
+
+        int labelX = cardX + COL_GRIP_W + 20;
+        int maxTextW = cardW - COL_GRIP_W - 40;
+        fontRendererObj.drawStringWithShadow(ellipsize(e.label, maxTextW), labelX, cardY + 8, COL_TEXT);
+        fontRendererObj.drawStringWithShadow(ellipsize(e.desc, maxTextW), labelX, cardY + 20, COL_TEXT_DIM);
+
+        int sc = e.swatchColor() | 0xFF000000;
+        Gui.drawRect(cardX + cardW - 18, cardY + (cardH - 10) / 2, cardX + cardW - 6, cardY + (cardH - 10) / 2 + 10, sc);
     }
 
     /** @return {x, y, w, h} for the header "Move Overlay" button */
@@ -480,11 +1084,15 @@ public class GuiClickMenu extends GuiScreen {
     private void rebuildVisible() {
         visibleRows.clear();
         for (Entry e : entries) {
-            visibleRows.add(new VisibleRow(e, 0));
-            if (e.expanded && e.hasChildren()) {
-                for (Entry child : e.children) {
-                    visibleRows.add(new VisibleRow(child, 1));
-                }
+            addVisibleRows(e, 0);
+        }
+    }
+
+    private void addVisibleRows(Entry e, int indent) {
+        visibleRows.add(new VisibleRow(e, indent));
+        if (e.expanded && e.hasChildren()) {
+            for (Entry child : e.children) {
+                addVisibleRows(child, indent + 1);
             }
         }
     }
@@ -494,6 +1102,9 @@ public class GuiClickMenu extends GuiScreen {
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         drawDefaultBackground();
+
+        // Live overlay above the dim (undimmed) so Appearance tweaks are visible
+        OverlayManager.INSTANCE.renderOverClickGui();
 
         // Main panel background
         Gui.drawRect(px, py, px + pw, py + ph, COL_BG);
@@ -548,94 +1159,145 @@ public class GuiClickMenu extends GuiScreen {
             boolean isChild = row.indent > 0;
             boolean hover = mouseX >= contentX && mouseX < px + pw && mouseY >= ry && mouseY < ry + rowH
                     && mouseY >= contentY && mouseY < contentY + contentH;
-            boolean isDraggingThisCol = isColumnsTab() && colDragActive && colDragFromIndex == i;
+            boolean isDraggingThis = listDragActive && listDragFromVis == i;
 
-            if (isColumnsTab() && e instanceof ColEntry && !isChild) {
-                if (isDraggingThisCol) continue;
-
+            if (e instanceof ColEntry && !isChild) {
+                if (isDraggingThis) continue;
                 int cardX = contentX + COL_CARD_PAD;
                 int cardW = contentW - COL_CARD_PAD * 2 - 4;
                 drawColCard(cardX, ry, cardW, (ColEntry) e, hover, false);
                 continue;
             }
 
+            if (e instanceof TierEntry) {
+                if (isDraggingThis) continue;
+                int cardX = contentX + COL_CARD_PAD + indent;
+                int cardW = contentW - COL_CARD_PAD * 2 - 4 - indent;
+                drawTierCard(cardX, ry, cardW, (TierEntry) e, hover, false);
+                continue;
+            }
+
             // Background
             if (isChild) {
-                Gui.drawRect(contentX, ry, px + pw, ry + ROW_H, COL_CHILD_BG);
-                // Left accent bar for children
-                Gui.drawRect(contentX + 6, ry + 2, contentX + 7, ry + ROW_H - 2, 0x30FFFFFF);
+                Gui.drawRect(contentX, ry, px + pw, ry + rowH, COL_CHILD_BG);
+                Gui.drawRect(contentX + 6, ry + 3, contentX + 7, ry + rowH - 3, 0x30FFFFFF);
             } else if (i % 2 == 1) {
-                Gui.drawRect(contentX, ry, px + pw, ry + ROW_H, COL_ROW_ALT);
+                Gui.drawRect(contentX, ry, px + pw, ry + rowH, COL_ROW_ALT);
             }
             if (hover) Gui.drawRect(contentX, ry, px + pw, ry + rowH, COL_ROW_HOVER);
-            // Bottom separator
             if (!isChild) {
                 Gui.drawRect(contentX + 8, ry + rowH - 1, px + pw - 8, ry + rowH, 0x08FFFFFF);
             }
 
-            int labelX = contentX + 10 + indent;
+            int labelX = contentX + 12 + indent;
+            int widgetRight = px + pw - 12;
+            int widgetLeft = widgetRight - (e.isSlider() ? SLIDER_W + VALUE_RESERVE + 8
+                    : (e.isToggle() ? TOGGLE_W + 8 : (e.hasColorSwatch() ? 24 : 40)));
+            int maxLabelW = Math.max(40, widgetLeft - labelX - 6);
 
-            // Expand arrow for parents with children
-            if (!isChild && e.hasChildren()) {
-                String arrow = e.expanded ? "\u25BC" : "\u25B6"; // ▼ or ▶
-                fontRendererObj.drawStringWithShadow(arrow, contentX + 4, ry + 7, COL_EXPAND_ARROW);
+            // Arrow sits in the left margin — do not shift label/desc
+            if (e.hasChildren()) {
+                String arrow = e.expanded ? "\u25BC" : "\u25B6";
+                fontRendererObj.drawStringWithShadow(arrow, contentX + 2 + indent, ry + 10, COL_EXPAND_ARROW);
             }
 
-            // Label
-            fontRendererObj.drawStringWithShadow(e.label, labelX, ry + 4, isChild ? 0xFFBBBBCC : COL_TEXT);
-            // Description
+            fontRendererObj.drawStringWithShadow(ellipsize(e.label, maxLabelW), labelX, ry + 6,
+                    isChild ? 0xFFBBBBCC : COL_TEXT);
             if (e.desc != null) {
-                fontRendererObj.drawStringWithShadow(e.desc, labelX, ry + 13, COL_TEXT_DIM);
+                fontRendererObj.drawStringWithShadow(ellipsize(e.desc, maxLabelW), labelX, ry + 17, COL_TEXT_DIM);
             }
-
-            // Right-side widget
-            int widgetRight = px + pw - 10;
 
             if (e.isToggle()) {
                 drawToggle(widgetRight - TOGGLE_W, ry + (rowH - TOGGLE_H) / 2, e.isOn());
             } else if (e.isSlider()) {
                 if (draggingIndex == i) {
                     int sx = widgetRight - SLIDER_W;
-                    float ratio = (float)(mouseX - sx) / SLIDER_W;
+                    float ratio = (float) (mouseX - sx) / SLIDER_W;
                     ratio = Math.max(0, Math.min(1, ratio));
                     e.setFromSlider(ratio);
                 }
 
                 int sx = widgetRight - SLIDER_W;
                 int sy = ry + (rowH - 6) / 2;
-                drawSlider(sx, sy, SLIDER_W, 6, e.getSliderPos(), draggingIndex == i || hover);
+                int previewRgb = -1;
+                int channel = -1;
+                if (e instanceof IntEntry) {
+                    IntEntry ie = (IntEntry) e;
+                    if (ie.rgbPreview != null && ie.rgbChannel >= 0) {
+                        int[] rgb = ie.rgbPreview.get();
+                        if (rgb != null && rgb.length >= 3) {
+                            previewRgb = ColorUtil.rgb(rgb[0], rgb[1], rgb[2]);
+                            channel = ie.rgbChannel;
+                        }
+                    }
+                }
+                drawSlider(sx, sy, SLIDER_W, 6, e.getSliderPos(), draggingIndex == i || hover, previewRgb, channel);
 
-                String val = e.valueText();
+                // Layout left of slider: [swatch][gap][value][gap][slider] — never overlap
+                String val = ellipsize(e.valueText(), VALUE_RESERVE - 4);
                 int vw = fontRendererObj.getStringWidth(val);
-                fontRendererObj.drawStringWithShadow(val, sx - 4 - vw, ry + (rowH - 8) / 2, COL_TEXT_VALUE);
+                int valX = sx - 8 - vw;
+                if (previewRgb != -1) {
+                    int sw = 8;
+                    int swatchX = valX - 4 - sw;
+                    int swatchY = ry + (rowH - 8) / 2;
+                    Gui.drawRect(swatchX, swatchY, swatchX + sw, swatchY + 8, previewRgb | 0xFF000000);
+                }
+                fontRendererObj.drawStringWithShadow(val, valX, ry + (rowH - 8) / 2, COL_TEXT_VALUE);
             } else {
-                String val = e.valueText();
-                int vw = fontRendererObj.getStringWidth(val);
-                fontRendererObj.drawStringWithShadow(val, widgetRight - vw, ry + (rowH - 8) / 2, 0xFFFFFFFF);
+                if (e.hasColorSwatch()) {
+                    int sc = e.swatchColor() | 0xFF000000;
+                    Gui.drawRect(widgetRight - 16, ry + (rowH - 8) / 2, widgetRight - 2, ry + (rowH - 8) / 2 + 8, sc);
+                } else {
+                    String val = e.valueText();
+                    if (val != null && !val.isEmpty()) {
+                        int vw = fontRendererObj.getStringWidth(val);
+                        fontRendererObj.drawStringWithShadow(val, widgetRight - vw, ry + (rowH - 8) / 2, 0xFFFFFFFF);
+                    }
+                }
             }
         }
 
-        // Column drag: drop indicator + floating card
-        if (isColumnsTab() && colDragActive && colDragFromIndex >= 0 && colDragFromIndex < visibleRows.size()) {
-            Entry dragEntry = visibleRows.get(colDragFromIndex).entry;
+        // List drag ghost (columns or tiers)
+        if (listDragActive && listDragFromVis >= 0 && listDragFromVis < visibleRows.size()) {
+            Entry dragEntry = visibleRows.get(listDragFromVis).entry;
+            int indent = visibleRows.get(listDragFromVis).indent * CHILD_INDENT;
             if (dragEntry instanceof ColEntry) {
-                if (colDropIndex >= 0) {
-                    int lineY = colDropIndex < visibleRows.size()
-                            ? visibleRowY(colDropIndex)
+                if (listDragDrop >= 0) {
+                    int lineY = listDragDrop < visibleRows.size()
+                            ? visibleRowY(listDragDrop)
                             : visibleRowY(visibleRows.size() - 1) + visibleRowHeight(visibleRows.size() - 1);
                     int lineX = contentX + COL_CARD_PAD;
                     int lineW = contentW - COL_CARD_PAD * 2 - 4;
                     Gui.drawRect(lineX, lineY - 1, lineX + lineW, lineY + 1, COL_ACCENT);
                 }
-
                 int cardX = contentX + COL_CARD_PAD;
                 int cardW = contentW - COL_CARD_PAD * 2 - 4;
-                int ghostY = mouseY - colDragOffsetY;
-                GlStateManager.pushMatrix();
-                GlStateManager.enableBlend();
-                drawColCard(cardX, ghostY, cardW, (ColEntry) dragEntry, true, true);
-                GlStateManager.disableBlend();
-                GlStateManager.popMatrix();
+                drawColCard(cardX, mouseY - listDragOffsetY, cardW, (ColEntry) dragEntry, true, true);
+            } else if (dragEntry instanceof TierEntry && listDragScaleId != null) {
+                // Drop line among same-scale tier cards
+                List<Integer> tierVis = new ArrayList<>();
+                for (int ti = 0; ti < visibleRows.size(); ti++) {
+                    Entry te = visibleRows.get(ti).entry;
+                    if (te instanceof TierEntry && listDragScaleId.equals(((TierEntry) te).scaleId)) {
+                        tierVis.add(ti);
+                    }
+                }
+                if (listDragDrop >= 0 && !tierVis.isEmpty()) {
+                    int lineY;
+                    if (listDragDrop < tierVis.size()) {
+                        lineY = visibleRowY(tierVis.get(listDragDrop));
+                    } else {
+                        int last = tierVis.get(tierVis.size() - 1);
+                        lineY = visibleRowY(last) + visibleRowHeight(last);
+                    }
+                    int lineX = contentX + COL_CARD_PAD + indent;
+                    int lineW = contentW - COL_CARD_PAD * 2 - 4 - indent;
+                    Gui.drawRect(lineX, lineY - 1, lineX + lineW, lineY + 1, COL_ACCENT);
+                }
+                int cardX = contentX + COL_CARD_PAD + indent;
+                int cardW = contentW - COL_CARD_PAD * 2 - 4 - indent;
+                drawTierCard(cardX, mouseY - listDragOffsetY, cardW, (TierEntry) dragEntry, true, true);
             }
         }
 
@@ -667,12 +1329,36 @@ public class GuiClickMenu extends GuiScreen {
         Gui.drawRect(knobX, knobY, knobX + knobSize, knobY + knobSize, COL_TOGGLE_KNOB);
     }
 
-    private void drawSlider(int x, int y, int w, int h, float pos, boolean highlight) {
-        Gui.drawRect(x, y, x + w, y + h, COL_SLIDER_TRACK);
-        int fillW = (int)(w * pos);
-        if (fillW > 0) {
-            Gui.drawRect(x, y, x + fillW, y + h, highlight ? COL_ACCENT : COL_ACCENT_DIM);
+    private void drawSlider(int x, int y, int w, int h, float pos, boolean highlight,
+                            int previewRgb, int channel) {
+        if (previewRgb != -1 && channel >= 0 && channel <= 2) {
+            // Channel gradient track (black → full channel color)
+            int steps = Math.max(8, w / 2);
+            for (int i = 0; i < steps; i++) {
+                float t = i / (float) (steps - 1);
+                int r = channel == 0 ? Math.round(255 * t) : 0;
+                int g = channel == 1 ? Math.round(255 * t) : 0;
+                int b = channel == 2 ? Math.round(255 * t) : 0;
+                int segX = x + (i * w) / steps;
+                int segX2 = x + ((i + 1) * w) / steps;
+                Gui.drawRect(segX, y, segX2, y + h, 0xFF000000 | (r << 16) | (g << 8) | b);
+            }
+            // Fill overlay using mixed preview color at current intensity
+            int fillW = (int) (w * pos);
+            if (fillW > 0) {
+                int pr = (previewRgb >> 16) & 0xFF;
+                int pg = (previewRgb >> 8) & 0xFF;
+                int pb = previewRgb & 0xFF;
+                Gui.drawRect(x, y, x + fillW, y + h, 0xFF000000 | (pr << 16) | (pg << 8) | pb);
+            }
+        } else {
+            Gui.drawRect(x, y, x + w, y + h, COL_SLIDER_TRACK);
+            int fillW = (int) (w * pos);
+            if (fillW > 0) {
+                Gui.drawRect(x, y, x + fillW, y + h, highlight ? COL_ACCENT : COL_ACCENT_DIM);
+            }
         }
+        int fillW = (int) (w * pos);
         int hx = x + fillW;
         if (hx > x + w - 2) hx = x + w - 2;
         if (hx < x) hx = x;
@@ -695,12 +1381,18 @@ public class GuiClickMenu extends GuiScreen {
             for (int i = 0; i < TABS.length; i++) {
                 int ty = tabStartY + i * 20;
                 if (mouseY >= ty && mouseY < ty + 20) {
+                    persistUiState();
                     activeTab = i;
-                    scrollY = 0;
-                    colDragFromIndex = -1;
-                    colDropIndex = -1;
-                    colDragActive = false;
+                    savedActiveTab = i;
+                    scrollY = savedScroll[activeTab];
+                    listDragFromVis = -1;
+                    listDragDrop = -1;
+                    listDragActive = false;
+                    listDragIsTier = false;
+                    listDragScaleId = null;
+                    listDragFromLocal = -1;
                     buildEntries();
+                    clampScroll();
                     return;
                 }
             }
@@ -717,8 +1409,8 @@ public class GuiClickMenu extends GuiScreen {
                     VisibleRow row = visibleRows.get(rowIndex);
                     Entry e = row.entry;
 
-                    // Columns tab: drag cards to reorder, toggle only on switch
-                    if (isColumnsTab() && e instanceof ColEntry && row.indent == 0) {
+                    // Column cards: drag to reorder, toggle only on switch
+                    if (e instanceof ColEntry && row.indent == 0) {
                         int cardX = contentX + COL_CARD_PAD;
                         int cardW = contentW - COL_CARD_PAD * 2 - 4;
                         int toggleX = cardX + cardW - TOGGLE_W - 8;
@@ -729,17 +1421,51 @@ public class GuiClickMenu extends GuiScreen {
                             return;
                         }
                         if (mouseButton == 0) {
-                            colDragFromIndex = rowIndex;
-                            colDropIndex = rowIndex;
-                            colDragActive = false;
-                            colDragOffsetY = mouseY - ry;
+                            listDragFromVis = rowIndex;
+                            listDragDrop = rowIndex;
+                            listDragActive = false;
+                            listDragOffsetY = mouseY - ry;
+                            listDragIsTier = false;
+                            listDragScaleId = null;
+                            listDragFromLocal = -1;
                             return;
                         }
                     }
 
-                    // Right-click on parent with children → toggle expand
-                    if (mouseButton == 1 && row.indent == 0 && e.hasChildren()) {
+                    // Tier cards: drag to reorder; click arrow / right-click to expand
+                    if (e instanceof TierEntry) {
+                        TierEntry te = (TierEntry) e;
+                        int indentPx = row.indent * CHILD_INDENT;
+                        int cardX = contentX + COL_CARD_PAD + indentPx;
+                        int arrowX = cardX + COL_GRIP_W + 4;
+                        if (mouseButton == 1 || (mouseButton == 0 && mouseX >= arrowX && mouseX <= arrowX + 12)) {
+                            te.expanded = !te.expanded;
+                            persistUiState();
+                            rebuildVisible();
+                            return;
+                        }
+                        if (mouseButton == 0) {
+                            listDragFromVis = rowIndex;
+                            listDragIsTier = true;
+                            listDragScaleId = te.scaleId;
+                            listDragFromLocal = te.tierIndex;
+                            listDragDrop = computeTierDropIndex(mouseY, te.scaleId);
+                            listDragActive = false;
+                            listDragOffsetY = mouseY - ry;
+                            return;
+                        }
+                    }
+
+                    // Right-click any numeric slider to type an exact value
+                    if (e.isSlider() && mouseButton == 1) {
+                        openNumberInput(e);
+                        return;
+                    }
+
+                    // Expand/collapse nested groups (any indent)
+                    if (e.hasChildren() && (mouseButton == 1 || e.expandsOnClick())) {
                         e.expanded = !e.expanded;
+                        persistUiState();
                         rebuildVisible();
                         return;
                     }
@@ -759,6 +1485,7 @@ public class GuiClickMenu extends GuiScreen {
                     e.onClick(mouseButton);
                     LazifyConfig.INSTANCE.save();
                     OverlayManager.INSTANCE.defaultSettings();
+                    maybeRefreshAppearance(e);
                     return;
                 }
             }
@@ -769,9 +1496,13 @@ public class GuiClickMenu extends GuiScreen {
 
     @Override
     protected void mouseClickMove(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
-        if (colDragFromIndex >= 0 && clickedMouseButton == 0) {
-            colDragActive = true;
-            colDropIndex = computeColDropIndex(mouseY);
+        if (listDragFromVis >= 0 && clickedMouseButton == 0) {
+            listDragActive = true;
+            if (listDragIsTier && listDragScaleId != null) {
+                listDragDrop = computeTierDropIndex(mouseY, listDragScaleId);
+            } else {
+                listDragDrop = computeColDropIndex(mouseY);
+            }
             return;
         }
         super.mouseClickMove(mouseX, mouseY, clickedMouseButton, timeSinceLastClick);
@@ -779,18 +1510,35 @@ public class GuiClickMenu extends GuiScreen {
 
     @Override
     protected void mouseReleased(int mouseX, int mouseY, int state) {
-        if (colDragFromIndex >= 0) {
-            if (colDragActive) {
-                applyColumnReorder(colDragFromIndex, colDropIndex);
+        if (listDragFromVis >= 0) {
+            if (listDragActive) {
+                if (listDragIsTier && listDragScaleId != null && listDragFromLocal >= 0) {
+                    applyTierReorder(listDragFromLocal, listDragDrop, listDragScaleId);
+                } else if (!listDragIsTier) {
+                    applyColumnReorder(listDragFromVis, listDragDrop);
+                }
+            } else if (listDragIsTier && listDragFromVis < visibleRows.size()) {
+                // Click without drag → toggle expand
+                Entry e = visibleRows.get(listDragFromVis).entry;
+                if (e instanceof TierEntry) {
+                    e.expanded = !e.expanded;
+                    persistUiState();
+                    rebuildVisible();
+                }
             }
-            colDragFromIndex = -1;
-            colDropIndex = -1;
-            colDragActive = false;
+            listDragFromVis = -1;
+            listDragDrop = -1;
+            listDragActive = false;
+            listDragIsTier = false;
+            listDragScaleId = null;
+            listDragFromLocal = -1;
         }
         if (draggingIndex >= 0) {
+            Entry dragged = (draggingIndex < visibleRows.size()) ? visibleRows.get(draggingIndex).entry : null;
             LazifyConfig.INSTANCE.save();
             OverlayManager.INSTANCE.defaultSettings();
             draggingIndex = -1;
+            maybeRefreshAppearance(dragged);
         }
         super.mouseReleased(mouseX, mouseY, state);
     }
@@ -800,7 +1548,7 @@ public class GuiClickMenu extends GuiScreen {
         super.handleMouseInput();
         int dWheel = Mouse.getEventDWheel();
         if (dWheel != 0) {
-            int step = isColumnsTab() ? (COL_CARD_H + COL_CARD_GAP) * 2 : ROW_H * 2;
+            int step = isColumnsTab() ? (COL_CARD_H + COL_CARD_GAP) * 2 : (ROW_H + ROW_GAP) * 2;
             scrollY -= Integer.signum(dWheel) * step;
             int maxScroll = Math.max(0, totalVisibleHeight() - contentH);
             scrollY = Math.max(0, Math.min(scrollY, maxScroll));
@@ -810,6 +1558,7 @@ public class GuiClickMenu extends GuiScreen {
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
         if (keyCode == 1 || keyCode == LazifyMod.guiKeybind.getKeyCode()) {
+            persistUiState();
             mc.displayGuiScreen(null);
             return;
         }

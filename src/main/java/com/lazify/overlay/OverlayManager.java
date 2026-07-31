@@ -4,6 +4,7 @@ import com.lazify.LazifyMod;
 import com.lazify.api.StatsProvider;
 import com.lazify.api.HttpUtil;
 import com.lazify.api.JsonWrapper;
+import com.lazify.config.GuiClickMenu;
 import com.lazify.config.LazifyConfig;
 import com.lazify.util.BordicSuperstar;
 import com.lazify.util.ColorUtil;
@@ -46,6 +47,9 @@ public class OverlayManager {
     static final String TAGS_KEY      = "tags";
     static final String STAR_KEY      = "star";
     static final String FKDR_KEY      = "fkdr";
+    static final String WLR_KEY       = "wlr";
+    static final String BBLR_KEY      = "bblr";
+    static final String KDR_KEY       = "kdr";
     static final String WINSTREAK_KEY = "winstreaks";
     static final String SESSION_KEY   = "session";
     static final String URCHIN_KEY    = "urchin";
@@ -62,8 +66,13 @@ public class OverlayManager {
     static final String JOIN_VALUE       = "joinvalue";
     static final String STAR_VALUE       = "starvalue";
     static final String FKDR_VALUE       = "fkdrvalue";
+    static final String WLR_VALUE        = "wlrvalue";
+    static final String BBLR_VALUE       = "bblrvalue";
+    static final String KDR_VALUE        = "kdrvalue";
     static final String INDEX_VALUE      = "indexvalue";
     static final String SESSION_VALUE    = "sessionvalue";
+    static final String SESSION_DURATION = "sessionduration"; // minutes online
+    static final String PING_VALUE       = "pingvalue";
     static final String WINSTREAK_VALUE  = "winstreakvalue";
     static final String WS_OVERALL_VALUE   = "wsoverall";
     static final String WS_MODE1_VALUE     = "wsmode1";
@@ -142,6 +151,8 @@ public class OverlayManager {
     private final Set<String> partyMembers = Collections.synchronizedSet(new HashSet<String>());
     private boolean parsingPartyList = false;
     private boolean partySent = false;
+    /** When true, hide Hypixel /pl response lines from chat (set by auto /pl + hidePl). */
+    private volatile boolean suppressPartyChat = false;
 
     // ── Overlay layout ─────────────────────────────────────────────────────────
     int   startX = 500, startY = 12, offsetY = 5;
@@ -149,12 +160,15 @@ public class OverlayManager {
     float borderWidth = 2.5f;
     int   background, borderColorRGB, columnTitles;
 
-    static final String PREFIX = "\u00a77[\u00a7dL\u00a77]\u00a7r ";
+    public static final String PREFIX = "\u00a77[\u00a7dL\u00a77]\u00a7r ";
     static final String URCHIN_CORAL_LABEL = "Urchin/Coral";
 
     private static final Pattern CHAT_SENDER  = Pattern.compile("^(?:\\[[\\w+]+\\] )?(\\w+) ?: .+");
     private static final Pattern LOBBY_JOIN   = Pattern.compile("^(\\w+) has joined \\((\\d+)/(\\d+)\\)!$");
     private static final Pattern PREGAME_LIST = Pattern.compile("^\\+ \\((\\d+)/(\\d+)\\) (\\w+)$");
+    private static final Pattern PLAYER_DISCONNECT = Pattern.compile("^(\\w+) disconnected\\.$");
+    private static final Pattern PLAYER_QUIT       = Pattern.compile("^(\\w+) has quit!$");
+    private static final Pattern PLAYER_RECONNECT  = Pattern.compile("^(\\w+) reconnected\\.$");
 
     private final Queue<String> pendingMessages = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private final Queue<String> pendingCommands = new java.util.concurrent.ConcurrentLinkedQueue<>();
@@ -210,8 +224,11 @@ public class OverlayManager {
         addColumn("Rank",       "[RANK]",    RANK_KEY);
         addColumn("Star",       "[STAR]",    STAR_KEY);
         addColumn("FKDR",       "[FKDR]",    FKDR_KEY);
+        addColumn("WLR",        "[WLR]",     WLR_KEY);
+        addColumn("BBLR",       "[BBLR]",    BBLR_KEY);
+        addColumn("KDR",        "[KDR]",     KDR_KEY);
         addColumn("Winstreaks", "[WS]",      WINSTREAK_KEY);
-        addColumn("Tags",       "[T]",       URCHIN_KEY);
+        addColumn("Tags",       "[TAGS]",    URCHIN_KEY);
         addColumn("Session",    "[SESSION]", SESSION_KEY);
         addColumn("Level",      "[LVL]",     LEVEL_KEY);
         addColumn("Ping",       "[PING]",    PING_KEY);
@@ -269,18 +286,10 @@ public class OverlayManager {
         if (idx >= 0 && idx < sortingOptions.size())
             sortBy = parseSortingMode.getOrDefault(sortingOptions.get(idx), FKDR_VALUE);
 
-        background     = ColorUtil.getHueRGB(cfg.getBgHue(),     cfg.getBgOpacity());
-        columnTitles   = ColorUtil.getHueRGB(cfg.getHeaderHue(), 255);
-        borderColorRGB = ColorUtil.getHueRGB(cfg.getBorderHue(), 255);
-
-        if (OverlayTheme.isNerdify(cfg.getOverlayTheme())) {
-            background     = OverlayTheme.backgroundColor(cfg.getBgOpacity());
-            columnTitles   = OverlayTheme.NERDIFY_GREEN;
-            borderColorRGB = OverlayTheme.NERDIFY_GREEN;
-            borderWidth    = 1.0f;
-        } else {
-            borderWidth    = 2.5f;
-        }
+        background     = cfg.getBackgroundColor();
+        columnTitles   = cfg.getHeaderColor(PLAYER_KEY);
+        borderColorRGB = cfg.getOutlineColor();
+        borderWidth    = cfg.getOutlineWidth();
 
         if (!showTeamColors) {
             teams.clear();
@@ -293,6 +302,9 @@ public class OverlayManager {
                 case RANK_KEY:       col.setEnabled(cfg.isColRank());       break;
                 case STAR_KEY:       col.setEnabled(cfg.isColStar());       break;
                 case FKDR_KEY:       col.setEnabled(cfg.isColFkdr());       break;
+                case WLR_KEY:        col.setEnabled(cfg.isColWlr());        break;
+                case BBLR_KEY:       col.setEnabled(cfg.isColBblr());       break;
+                case KDR_KEY:        col.setEnabled(cfg.isColKdr());        break;
                 case WINSTREAK_KEY:  col.setEnabled(cfg.isColWinstreaks()); break;
                 case URCHIN_KEY:     col.setEnabled(cfg.isColUrchin());     break;
                 case SESSION_KEY:    col.setEnabled(cfg.isColSession());    break;
@@ -323,6 +335,9 @@ public class OverlayManager {
             case RANK_KEY:       return "rank";
             case STAR_KEY:       return "star";
             case FKDR_KEY:       return "fkdr";
+            case WLR_KEY:        return "wlr";
+            case BBLR_KEY:       return "bblr";
+            case KDR_KEY:        return "kdr";
             case WINSTREAK_KEY:  return "winstreaks";
             case URCHIN_KEY:     return "urchin";
             case SESSION_KEY:    return "session";
@@ -392,17 +407,21 @@ public class OverlayManager {
         // Handled in updateStatus() on status transition to 3
 
         // Send /pl once per lobby to detect party members for dodge warning
-        if (!partySent && (status >= 1 || inBwPregame)) {
+        if (!partySent && LazifyConfig.INSTANCE.isAutoPl() && (status >= 1 || inBwPregame)) {
             partySent = true;
+            final boolean hide = LazifyConfig.INSTANCE.isHidePl();
             new Thread(() -> {
                 try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
+                if (hide) suppressPartyChat = true;
                 pendingCommands.add("/pl");
-                debugFromThread("Auto /pl triggered for party detection");
+                debugFromThread("Auto /pl triggered for party detection (hide=" + hide + ")");
             }).start();
         }
 
         if (status < 1 && !inBwPregame) return;
         if (!LazifyConfig.INSTANCE.isAutoTablist()) return;
+        // Main Bedwars lobby (L* servers): optional skip so walking around doesn't spam tags/chat
+        if (isMainLobbyDisabled()) return;
 
         Set<String> currentEntityUUIDs = new HashSet<>();
         long currentTime = System.currentTimeMillis();
@@ -469,6 +488,11 @@ public class OverlayManager {
 
             if (isBot(pla)) continue;
 
+            if (ColorUtil.isGrayNamed(displayName)) {
+                debug("Skipping gray tab player: " + username + " uuid=" + uuid);
+                continue;
+            }
+
             if (ColorUtil.hasObfuscationBefore(displayName, username)) {
                 debug("Skipping obfuscated tab player: " + username + " uuid=" + uuid);
                 continue;
@@ -485,12 +509,10 @@ public class OverlayManager {
                 encounters.add(new Object[]{currentLobby, currentTime});
             }
             playerEncounters.put(encKey, encounters);
-            String formattedEncounters = ColorUtil.getSeenColor(encounters.size());
-
             // ── Build placeholder stats entry ─────────────────────────────────
             Map<String, Object> placeholder = new ConcurrentHashMap<>();
             placeholder.put(JOIN_VALUE,       (int)(currentTime / 1000) * -1);
-            placeholder.put(ENCOUNTERS_KEY,   formattedEncounters);
+            placeholder.put(ENCOUNTERS_KEY,   String.valueOf(encounters.size()));
             placeholder.put(ENCOUNTERS_VALUE, (double) encounters.size());
             placeholder.put(PLAYER_KEY,       formatTabPlayerName(pla, displayName));
 
@@ -537,8 +559,8 @@ public class OverlayManager {
                     if (realName != null && !realName.isEmpty()) {
                         debug("Skin denick: " + username + " -> " + realName);
                         placeholder.put(PLAYER_KEY, "\u00a7e" + username + " \u00a7d> \u00a7a" + realName);
+                        placeholder.put("denicked", true);
                         overlayPlayers.put(uuid, placeholder);
-                        addPlaceholderStats(uuid, realName, false);
                         addToPlayers(uuid);
                         final String fUuid = uuid, fLobby = currentLobby;
                         final String fNick = username, fReal = realName;
@@ -555,7 +577,7 @@ public class OverlayManager {
                         placeholder.put(PLAYER_KEY, username);
                         overlayPlayers.put(uuid, placeholder);
                         sortOverlay();
-                        if (LazifyConfig.INSTANCE.isSendNickedToChat()) {
+                        if (LazifyConfig.INSTANCE.isSendNickedToChat() && shouldAnnounceInChat()) {
                             print(PREFIX + "\u00a7c" + username + " \u00a7eis nicked");
                         }
                         addToPlayers(uuid);
@@ -831,6 +853,267 @@ public class OverlayManager {
         }
     }
 
+    Map<String, Map<String, Object>> getOverlayPlayersSnapshot() {
+        return overlayPlayers;
+    }
+
+    /** Enabled overlay columns in configured order (for Mellow tab layout). */
+    List<ColumnDef> getEnabledTabColumns() {
+        List<ColumnDef> enabled = new ArrayList<>();
+        for (ColumnDef col : columns) {
+            if (col.isEnabled()) enabled.add(col);
+        }
+        return enabled;
+    }
+
+    /** Header text color for a column key (per-column RGB). */
+    int headerColorFor(String colKey) {
+        return LazifyConfig.INSTANCE.getHeaderColor(colKey);
+    }
+
+    /**
+     * Live RGB for threshold-colored stats (null = use § codes / default white).
+     * Applied at draw time so config changes update immediately.
+     */
+    Integer liveStatRgb(String colKey, Map<String, Object> ps) {
+        if (ps == null || colKey == null) return null;
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        try {
+            switch (colKey) {
+                case FKDR_KEY:
+                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    return cfg.getFkdrScale().colorFor(getDoubleStat(ps, FKDR_VALUE));
+                case WLR_KEY:
+                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    return cfg.getFkdrScale().colorFor(statOrParse(ps, WLR_VALUE, WLR_KEY));
+                case BBLR_KEY:
+                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    return cfg.getFkdrScale().colorFor(statOrParse(ps, BBLR_VALUE, BBLR_KEY));
+                case KDR_KEY:
+                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    return cfg.getFkdrScale().colorFor(statOrParse(ps, KDR_VALUE, KDR_KEY));
+                case WINSTREAK_KEY:
+                    if (!cfg.isWsColors()) return 0xFFFFFFFF;
+                    double ws = getDoubleStat(ps, WINSTREAK_VALUE);
+                    if (ws <= 0) return null;
+                    return cfg.getWsScale().colorFor(ws);
+                case PING_KEY:
+                    if (!cfg.isPingColors()) return 0xFFFFFFFF;
+                    double ping = statOrParse(ps, PING_VALUE, PING_KEY);
+                    if (ping <= 0) return 0xFFAAAAAA;
+                    return cfg.getPingScale().colorFor(ping);
+                case SESSION_KEY: {
+                    if (!cfg.isSessionColors()) return 0xFFFFFFFF;
+                    Object raw = ps.get(SESSION_KEY);
+                    if (raw == null) return null;
+                    String s = ColorUtil.strip(raw.toString());
+                    if ("OFFLINE".equalsIgnoreCase(s) || "API".equalsIgnoreCase(s)) return 0xFFFF5555;
+                    double mins = getDoubleStat(ps, SESSION_DURATION);
+                    if (mins < 0) return null;
+                    return cfg.getSessionScale().colorFor(mins);
+                }
+                case ENCOUNTERS_KEY:
+                    if (!cfg.isEncountersColors()) return 0xFFFFFFFF;
+                    return cfg.getEncountersScale().colorFor(getDoubleStat(ps, ENCOUNTERS_VALUE));
+                default:
+                    return null;
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private double statOrParse(Map<String, Object> ps, String valueKey, String displayKey) {
+        if (ps.containsKey(valueKey)) return getDoubleStat(ps, valueKey);
+        Object raw = ps.get(displayKey);
+        if (raw == null) return 0;
+        try {
+            return Double.parseDouble(ColorUtil.strip(raw.toString()).split(" ")[0]);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** RGB for Mellow tab cell draw (same scales as HUD). */
+    public int mellowCellColor(String colKey, Map<String, Object> ps) {
+        Integer rgb = liveStatRgb(colKey, ps);
+        return rgb != null ? rgb : -1;
+    }
+
+    /** Formatted cell text for Mellow-style tab rows; mirrors HUD column semantics. */
+    String resolveMellowTabCell(NetworkPlayerInfo info, Map<String, Object> ps, String uuid, String colKey) {
+        if (info == null || info.getGameProfile() == null || colKey == null) return "";
+
+        boolean nicked = isTabNicked(uuid, ps);
+        boolean denicked = ps != null && (Boolean.TRUE.equals(ps.get("denicked"))
+                || nickRealUuid.containsKey(uuid));
+        boolean unresolvedNick = nicked && !denicked;
+        boolean isError = ps != null && Boolean.TRUE.equals(ps.get("error"));
+        boolean hasTeam = teams.containsKey(uuid);
+
+        switch (colKey) {
+            case PLAYER_KEY:
+                if (isError && (ps == null || stringVal(ps.get(PLAYER_KEY)).isEmpty())) {
+                    return "\u00a74E";
+                }
+                return resolveMellowTabPlayerName(info, ps, uuid, nicked, denicked, hasTeam);
+            case RANK_KEY:
+                if (nicked) return ColorUtil.formatRankColumn(true, "");
+                if (ps == null) return "";
+                return stringVal(ps.get(RANK_KEY));
+            case STAR_KEY:
+                if (unresolvedNick && (ps == null || !hasTabStar(ps))) {
+                    return "\u00a75[\u00a7lNICK\u00a7r\u00a75]\u00a7r";
+                }
+                if (ps != null && hasTabStar(ps)) {
+                    String stars = formatDisplayStat(STAR_KEY, ps, stringVal(ps.get(STAR_KEY)));
+                    if (stars.isEmpty()) return formatTabStars(ps);
+                    String plain = ColorUtil.strip(stars);
+                    if (plain.startsWith("[") && plain.endsWith("]")) return stars + "\u00a7r";
+                    if (!stars.contains("\u2606") && !stars.contains("\u272b")) {
+                        return "\u00a77[" + stars + "\u00a7f\u2606\u00a77]\u00a7r";
+                    }
+                    return "\u00a77[" + stars + "\u00a77]\u00a7r";
+                }
+                return "";
+            case FKDR_KEY:
+                return resolveMellowTabStat(ps, formatDisplayStat(FKDR_KEY, ps,
+                        ps != null ? stringVal(ps.get(FKDR_KEY)) : null), unresolvedNick, isError);
+            case WLR_KEY:
+                return resolveMellowTabStat(ps, formatDisplayStat(WLR_KEY, ps,
+                        ps != null ? stringVal(ps.get(WLR_KEY)) : null), unresolvedNick, isError);
+            case BBLR_KEY:
+                return resolveMellowTabStat(ps, formatDisplayStat(BBLR_KEY, ps,
+                        ps != null ? stringVal(ps.get(BBLR_KEY)) : null), unresolvedNick, isError);
+            case KDR_KEY:
+                return resolveMellowTabStat(ps, formatDisplayStat(KDR_KEY, ps,
+                        ps != null ? stringVal(ps.get(KDR_KEY)) : null), unresolvedNick, isError);
+            case WINSTREAK_KEY:
+                return resolveMellowTabStat(ps, ps != null ? stringVal(ps.get(WINSTREAK_KEY)) : null, unresolvedNick, isError);
+            case URCHIN_KEY:
+                if (nicked) {
+                    return formatNickTagsColumn(ps != null ? stringVal(ps.get(URCHIN_KEY)) : null);
+                }
+                return ps != null ? stringVal(ps.get(URCHIN_KEY)) : "";
+            case ENCOUNTERS_KEY:
+                if (ps == null || stringVal(ps.get(ENCOUNTERS_KEY)).isEmpty()) return "\u00a7a1";
+                return formatDisplayStat(ENCOUNTERS_KEY, ps, stringVal(ps.get(ENCOUNTERS_KEY)));
+            case SESSION_KEY:
+                return resolveMellowTabStat(ps, ps != null ? stringVal(ps.get(SESSION_KEY)) : null, unresolvedNick, isError);
+            case LEVEL_KEY:
+                return resolveMellowTabStat(ps, formatDisplayStat(LEVEL_KEY, ps,
+                        ps != null ? stringVal(ps.get(LEVEL_KEY)) : null), unresolvedNick, isError);
+            case PING_KEY:
+                if (ps != null && ps.get(PING_KEY) != null) {
+                    return formatDisplayStat(PING_KEY, ps, stringVal(ps.get(PING_KEY)));
+                }
+                String coloredPing = ColorUtil.getPingColor(info.getResponseTime());
+                if (LazifyConfig.INSTANCE.getPingStyle() == 1 && !coloredPing.endsWith("-")) {
+                    return coloredPing + "ms";
+                }
+                return coloredPing;
+            default:
+                return "";
+        }
+    }
+
+    static boolean isMellowTabHeadColumn(String colKey) {
+        return PLAYER_KEY.equals(colKey);
+    }
+
+    static boolean isMellowTabRightAligned(String colKey) {
+        return !PLAYER_KEY.equals(colKey) && !RANK_KEY.equals(colKey);
+    }
+
+    private static boolean isTabNicked(String uuid, Map<String, Object> ps) {
+        if (ps != null && Boolean.TRUE.equals(ps.get("nicked"))) return true;
+        return uuid != null && uuid.length() >= 13 && uuid.charAt(12) != '4';
+    }
+
+    private String resolveMellowTabPlayerName(NetworkPlayerInfo info, Map<String, Object> ps,
+                                            String uuid, boolean nicked, boolean denicked, boolean hasTeam) {
+        if (ps != null) {
+            String player = stringVal(ps.get(PLAYER_KEY));
+            if (!player.isEmpty()) {
+                // Keep colored nick > real for denicked rows
+                if (denicked || player.contains("\u00a7d>")) {
+                    return player + "\u00a7r";
+                }
+                if (nicked && !hasTeam) {
+                    return "\u00a7e" + ColorUtil.strip(player) + "\u00a7r";
+                }
+                return player + "\u00a7r";
+            }
+        }
+        String playerName = info.getGameProfile().getName();
+        String[] tabData = getTabDisplayName2(playerName);
+        String team = tabData[0] != null ? tabData[0] : "";
+        String name = tabData[1] != null ? tabData[1] : playerName;
+        String suffix = tabData.length > 2 && tabData[2] != null ? tabData[2] : "";
+        String teamColor = team.length() >= 2 ? team.substring(0, 2) : "\u00a7f";
+        if (nicked && !hasTeam) return "\u00a7e" + name + "\u00a7r";
+        return "\u00a7r" + teamColor + name + suffix;
+    }
+
+    private static String resolveMellowTabStat(Map<String, Object> ps, String value,
+                                               boolean nicked, boolean isError) {
+        if (value != null && !value.isEmpty()
+                && !value.equals("\u00a77-") && !value.equals("\u00a77\u2014")) {
+            return value;
+        }
+        if (isError) return "\u00a74E";
+        if (nicked) return ps != null ? "\u00a77-" : "-";
+        return "";
+    }
+
+    private static boolean hasTabStar(Map<String, Object> ps) {
+        return !getTabStarDisplay(ps).isEmpty();
+    }
+
+    private static String formatTabStars(Map<String, Object> ps) {
+        String stars = getTabStarDisplay(ps);
+        if (stars.isEmpty()) return "";
+        String plain = stars.replaceAll("\u00a7.", "");
+        if (plain.startsWith("[") && plain.endsWith("]")) return stars + "\u00a7r";
+        return "\u00a77[" + stars + "\u00a77]\u00a7r";
+    }
+
+    private static String getTabStarDisplay(Map<String, Object> ps) {
+        Object starVal = ps.get(STAR_VALUE);
+        if (starVal instanceof Number) {
+            int stars = ((Number) starVal).intValue();
+            if (stars > 0) return ColorUtil.getPrestigeColor(stars) + "\u00a7f\u2606";
+        }
+        String star = stringVal(ps.get(STAR_KEY));
+        if (!star.isEmpty() && !star.equals("\u00a77-")) {
+            if (!star.contains("\u2606") && !star.contains("\u272b")) return star + "\u00a7f\u2606";
+            return star;
+        }
+        return "";
+    }
+
+    private static String stringVal(Object o) {
+        if (o == null) return "";
+        String s = String.valueOf(o);
+        return "null".equals(s) ? "" : s;
+    }
+
+    /** Mellow {@code PlayerUtils.getTabDisplayName2}. */
+    private static String[] getTabDisplayName2(String playerName) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.theWorld == null) return new String[] { "", playerName, "" };
+        ScorePlayerTeam playerTeam = mc.theWorld.getScoreboard().getPlayersTeam(playerName);
+        if (playerTeam == null) return new String[] { "", playerName, "" };
+        int length = playerTeam.getColorPrefix().length();
+        if (length == 10) {
+            return new String[] { playerTeam.getColorPrefix(), playerName, playerTeam.getColorSuffix() };
+        }
+        if (length == 8) {
+            return new String[] { playerTeam.getColorPrefix(), playerName, "" };
+        }
+        return new String[] { "", playerName, "" };
+    }
+
     private String formatTabPlayerName(NetworkPlayerInfo pla, String displayName) {
         String baseName = pla.getGameProfile().getName();
         if (status == 3) {
@@ -1008,18 +1291,28 @@ public class OverlayManager {
     // Column width calculation (mirrors original doColumns)
     // ==========================================================================
 
+    /** Equal outer inset on all four sides: small base + user Padding. */
+    int overlayInset() {
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        int base = OverlayTheme.isNerdify(cfg.getOverlayTheme())
+                ? OverlayTheme.edgePad() : 4;
+        return base + cfg.getOverlayPad();
+    }
+
     void doColumns(boolean updateEnabled) {
-        boolean nerdify = OverlayTheme.isNerdify(LazifyConfig.INSTANCE.getOverlayTheme());
-        int colGap = LazifyConfig.INSTANCE.getOverlayColGap();
-        int edgePad = nerdify ? OverlayTheme.edgePad() : Math.max(4, colGap / 2);
-        int currentX = startX + edgePad;
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        boolean nerdify = OverlayTheme.isNerdify(cfg.getOverlayTheme());
+        int colGap = cfg.getOverlayColGap();
+        int inset = overlayInset();
+        int currentX = startX + inset;
+        boolean firstCol = true;
 
         for (ColumnDef col : columns) {
-            int longest = OverlayRenderer.getFontWidth(
-                    nerdify ? OverlayTheme.headerFor(col.getKey()) : col.getHeader());
             String key  = col.getKey();
-
             if (!col.isEnabled()) continue;
+
+            // Include bold in header measure so layout matches what we draw
+            int longest = OverlayRenderer.getFontWidth(headerTextFor(col, nerdify));
 
             synchronized (currentPlayers) {
                 for (String uuid : currentPlayers) {
@@ -1037,7 +1330,7 @@ public class OverlayManager {
                     } else {
                         Object obj = pd.get(key);
                         if (obj == null) continue;
-                        value = obj.toString();
+                        value = formatDisplayStat(key, pd, obj.toString());
                     }
 
                     int w;
@@ -1070,20 +1363,131 @@ public class OverlayManager {
                 int minW = OverlayTheme.minColWidth(key);
                 if (minW > longest) longest = minW;
             }
+            if (!firstCol) currentX += colGap;
+            firstCol = false;
             col.setMaxwidth(longest);
             col.setPosition(currentX);
-            currentX += longest + colGap;
+            currentX += longest;
         }
 
-        int lineHeight = nerdify ? OverlayRenderer.nerdifyLineHeight()
-                : OverlayRenderer.getFontHeight() + offsetY;
-        int headerBlock = nerdify
-                ? OverlayTheme.headerPadTop() + OverlayRenderer.getFontHeight()
-                    + OverlayTheme.headerSeparatorGap() + OverlayTheme.rowGapAfterSeparator()
-                : lineHeight + 5;
-        endX = currentX + (nerdify ? edgePad : 0);
-        endY = startY + headerBlock + (currentPlayers.size() * lineHeight)
-                + (currentPlayers.size() > 0 ? OverlayTheme.bottomPad() : (nerdify ? OverlayTheme.bottomPad() : 1));
+        int fontH = OverlayRenderer.getFontHeight();
+        int headerGap = 5; // space between header text and first player row
+        int lineHeight = nerdify ? OverlayRenderer.nerdifyLineHeight() : fontH + offsetY;
+        int rows = currentPlayers.size();
+
+        // Equal inset on every side; content sits inside (headers + rows)
+        endX = currentX + inset;
+        if (nerdify) {
+            int headerBlock = OverlayTheme.headerPadTop() + fontH
+                    + OverlayTheme.headerSeparatorGap() + OverlayTheme.rowGapAfterSeparator();
+            int bottom = rows > 0 ? OverlayTheme.bottomPad() : OverlayTheme.bottomPad();
+            endY = startY + inset + headerBlock + (rows * lineHeight) + bottom + inset;
+        } else if (rows == 0) {
+            // Headers only — equal inset top/bottom (no header→row gap under the text)
+            endY = startY + inset + fontH + inset;
+        } else {
+            // With players — keep header→row gap and trailing row-gap as bottom breathing room
+            int contentH = fontH + headerGap + (rows * lineHeight);
+            endY = startY + inset + contentH + inset;
+        }
+    }
+
+    /** Header label as drawn (applies bold when enabled). */
+    String headerTextFor(ColumnDef col, boolean nerdify) {
+        String header = nerdify ? OverlayTheme.headerFor(col.getKey()) : col.getHeader();
+        if (header == null) header = "";
+        if (LazifyConfig.INSTANCE.isHeaderBold() && !header.isEmpty() && !header.contains("\u00a7l")) {
+            header = "\u00a7l" + header;
+        }
+        return header;
+    }
+
+    /** Live display formatting for ratios / counts / ping from config. */
+    String formatDisplayStat(String key, Map<String, Object> ps, String fallback) {
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        if (ps == null) return fallback == null ? "" : fallback;
+        switch (key) {
+            case FKDR_KEY:
+            case WLR_KEY:
+            case BBLR_KEY:
+            case KDR_KEY: {
+                String valueKey = FKDR_KEY.equals(key) ? FKDR_VALUE
+                        : WLR_KEY.equals(key) ? WLR_VALUE
+                        : BBLR_KEY.equals(key) ? BBLR_VALUE : KDR_VALUE;
+                if (ps.get(valueKey) instanceof Number) {
+                    return ColorUtil.formatRatio(((Number) ps.get(valueKey)).doubleValue(), cfg.getFkdrDecimals());
+                }
+                break;
+            }
+            case STAR_KEY: {
+                if (ps.get(STAR_VALUE) instanceof Number) {
+                    int stars = ((Number) ps.get(STAR_VALUE)).intValue();
+                    return ColorUtil.formatStarDisplay(stars, cfg.isAbbreviateNumbers());
+                }
+                break;
+            }
+            case ENCOUNTERS_KEY: {
+                long n = -1;
+                if (ps.get(ENCOUNTERS_VALUE) instanceof Number) {
+                    n = ((Number) ps.get(ENCOUNTERS_VALUE)).longValue();
+                } else {
+                    try {
+                        n = Long.parseLong(ColorUtil.strip(fallback).trim());
+                    } catch (Exception ignored) {}
+                }
+                if (n >= 0 && cfg.isAbbreviateNumbers()) {
+                    return ColorUtil.formatCount(n, true);
+                }
+                break;
+            }
+            case LEVEL_KEY: {
+                long n = -1;
+                try {
+                    n = Long.parseLong(ColorUtil.strip(fallback).replace("-", "").trim());
+                } catch (Exception ignored) {}
+                if (n > 0 && cfg.isAbbreviateNumbers()) {
+                    String body = ColorUtil.formatCount(n, true);
+                    return fallback != null && fallback.startsWith("\u00a7")
+                            ? fallback.substring(0, 2) + body : body;
+                }
+                break;
+            }
+            case PING_KEY: {
+                double ping = statOrParse(ps, PING_VALUE, PING_KEY);
+                if (ping >= 0 && ps.get(PING_KEY) != null && !"-".equals(ColorUtil.strip(fallback))) {
+                    return ColorUtil.formatPing((int) Math.round(ping), cfg.getPingStyle());
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        return fallback == null ? "" : fallback;
+    }
+
+    /** Row tint for role highlights / stripes. Priority: self > party > tagged > nick. */
+    int resolveRowTint(String uuid, Map<String, Object> ps, int rowIndex) {
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        boolean unresolvedNick = ps != null && Boolean.TRUE.equals(ps.get("nicked"))
+                && !Boolean.TRUE.equals(ps.get("denicked")) && !nickRealUuid.containsKey(uuid);
+        boolean tagged = ps != null && (hasNonEmpty(ps.get("urchinTagType")) || hasNonEmpty(ps.get("seraphTagType")));
+        if (cfg.isHighlightSelf() && isSelfUuid(uuid)) return cfg.getHighlightSelfColor();
+        if (cfg.isHighlightParty() && uuid != null && partyMembers.contains(uuid)) return cfg.getHighlightPartyColor();
+        if (cfg.isHighlightTagged() && tagged) return cfg.getHighlightTaggedColor();
+        if (cfg.isHighlightNicked() && unresolvedNick) return cfg.getHighlightNickedColor();
+        if (cfg.isStripeEnabled() && (rowIndex & 1) == 1) return cfg.getStripeColor();
+        return 0;
+    }
+
+    boolean isSelfUuid(String uuid) {
+        if (uuid == null) return false;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer == null) return false;
+        return uuid.equals(mc.thePlayer.getUniqueID().toString().replace("-", ""));
+    }
+
+    private static boolean hasNonEmpty(Object o) {
+        return o != null && !o.toString().trim().isEmpty();
     }
 
     // ==========================================================================
@@ -1501,6 +1905,9 @@ public class OverlayManager {
         denickData.put(PLAYER_KEY, "\u00a7e" + nickName + " \u00a7d> \u00a7a" + realName);
         denickData.put("nicked", true);
         denickData.put("denicked", true);
+        denickData.put("apinicked", "\u00a7eN");
+        denickData.put(URCHIN_KEY, formatNickTagsColumn(null));
+        denickData.put(RANK_KEY, ColorUtil.formatRankColumn(true, ""));
         addToOverlay(nickUuid, denickData);
         uuidToName.put(nickUuid, realName);
 
@@ -1508,23 +1915,80 @@ public class OverlayManager {
         handlePlayerTags(nickUuid, lobby);
         handleBordicPing(nickUuid, lobby);
 
-        if (LazifyConfig.INSTANCE.isSendNickedToChat()) {
+        // Re-assert nick UI after stats/tags may have merged real-player fields
+        if (isInOverlay(nickUuid) && currentLobby.equals(lobby)) {
+            Map<String, Object> keep = new ConcurrentHashMap<>();
+            keep.put(PLAYER_KEY, "\u00a7e" + nickName + " \u00a7d> \u00a7a" + realName);
+            keep.put("nicked", true);
+            keep.put("denicked", true);
+            keep.put("apinicked", "\u00a7eN");
+            keep.put(RANK_KEY, ColorUtil.formatRankColumn(true, ""));
+            Map<String, Object> existing = overlayPlayers.get(nickUuid);
+            Object tags = existing != null ? existing.get(URCHIN_KEY) : null;
+            keep.put(URCHIN_KEY, formatNickTagsColumn(tags != null ? tags.toString() : null));
+            addToOverlay(nickUuid, keep);
+        }
+
+        if (LazifyConfig.INSTANCE.isSendNickedToChat() && shouldAnnounceInChat()) {
             String suffix = chatSuffix == null ? "" : " \u00a77(" + chatSuffix + ")";
             printFromThread(PREFIX + "\u00a7e" + nickName + " \u00a7dis nicked \u00a7d> \u00a7a" + realName + suffix);
         }
+    }
+
+    /** Main BW lobby (scoreboard status 1), not pregame/ingame. */
+    private boolean isMainLobby() {
+        return status == 1 && !inBwPregame;
+    }
+
+    private boolean isMainLobbyDisabled() {
+        return LazifyConfig.INSTANCE.isDisableInLobby() && isMainLobby();
+    }
+
+    /** Nick/tag chat alerts — suppressed in main lobby when disableInLobby is on. */
+    private boolean shouldAnnounceInChat() {
+        return !isMainLobbyDisabled();
+    }
+
+    /** Tags column for nicked rows: always keep yellow N, optionally + cheater tags. */
+    private static String formatNickTagsColumn(String cheaterTags) {
+        String nickMark = "\u00a7eN";
+        if (cheaterTags == null || cheaterTags.isEmpty()) return nickMark;
+        String plain = ColorUtil.strip(cheaterTags).trim();
+        if (plain.isEmpty() || "-".equals(plain)) return nickMark;
+        // Strip a leading nick mark so we don't stack N+N
+        if (plain.equals("N") || plain.equalsIgnoreCase("n")) return nickMark;
+        if (plain.startsWith("N+")) {
+            String rest = cheaterTags;
+            int plus = rest.indexOf('+');
+            if (plus >= 0 && plus + 1 < rest.length()) {
+                return nickMark + "\u00a77+" + rest.substring(plus + 1);
+            }
+            return nickMark;
+        }
+        if (plain.startsWith("N")) {
+            String restPlain = plain.substring(1).replaceFirst("^\\+", "").trim();
+            if (restPlain.isEmpty()) return nickMark;
+        }
+        return nickMark + "\u00a77+" + cheaterTags;
     }
 
     private void preserveDenickDisplay(String overlayUuid, Map<String, Object> stats) {
         Map<String, Object> existing = overlayPlayers.get(overlayUuid);
         if (existing == null) return;
         Object display = existing.get(PLAYER_KEY);
-        if (display != null && display.toString().contains("\u00a7d>")) {
-            stats.put(PLAYER_KEY, display);
+        boolean denicked = Boolean.TRUE.equals(existing.get("denicked"))
+                || (display != null && display.toString().contains("\u00a7d>"))
+                || nickRealUuid.containsKey(overlayUuid);
+        if (denicked) {
+            if (display != null && display.toString().contains("\u00a7d>")) {
+                stats.put(PLAYER_KEY, display);
+            }
             stats.put("nicked", true);
             stats.put("denicked", true);
-        } else if (Boolean.TRUE.equals(existing.get("denicked"))) {
-            stats.put("nicked", true);
-            stats.put("denicked", true);
+            stats.put("apinicked", "\u00a7eN");
+            Object tags = existing.get(URCHIN_KEY);
+            stats.put(URCHIN_KEY, formatNickTagsColumn(tags != null ? tags.toString() : null));
+            stats.put(RANK_KEY, ColorUtil.formatRankColumn(true, ""));
         }
     }
 
@@ -1534,11 +1998,19 @@ public class OverlayManager {
 
     public void onRender() {
         Minecraft mc = Minecraft.getMinecraft();
+        if (OverlayTheme.isMellow(LazifyConfig.INSTANCE.getOverlayTheme())) return;
+
         boolean tabHeld = LazifyConfig.INSTANCE.isShowOnTab()
                 && mc.gameSettings != null && mc.gameSettings.keyBindPlayerList.isKeyDown();
         if (!visible && !tabHeld) return;
         if (mc.thePlayer == null) return;
-        if (mc.currentScreen != null && !(mc.currentScreen instanceof GuiChat)) return;
+        // GuiClickMenu draws the overlay itself (above the dim). Other screens still hide it.
+        if (mc.currentScreen != null
+                && !(mc.currentScreen instanceof GuiChat)
+                && !(mc.currentScreen instanceof GuiClickMenu)) {
+            return;
+        }
+        if (mc.currentScreen instanceof GuiClickMenu) return; // drawn from the GUI after dim
         if (overlayTicks < 5 || columns.isEmpty()) return;
 
         float scale = LazifyConfig.INSTANCE.getOverlayScale();
@@ -1550,31 +2022,92 @@ public class OverlayManager {
         }
     }
 
+    /** Draw live overlay above the click-GUI dim (undimmed). */
+    public void renderOverClickGui() {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (OverlayTheme.isMellow(LazifyConfig.INSTANCE.getOverlayTheme())) return;
+        if (!visible) return;
+        if (mc.thePlayer == null || columns.isEmpty()) return;
+        if (overlayTicks < 5) return;
+
+        float scale = LazifyConfig.INSTANCE.getOverlayScale();
+        boolean scaled = OverlayRenderer.pushScale(scale, startX, startY);
+        try {
+            renderOverlayContent();
+        } finally {
+            OverlayRenderer.popScale(scaled);
+        }
+    }
+
+    /** Unscaled content size in pixels (after last doColumns). */
+    public int getOverlayContentWidth()  { return Math.max(1, endX - startX); }
+    public int getOverlayContentHeight() { return Math.max(1, endY - startY); }
+
+    /**
+     * Draw the live overlay (real players/columns/colors) at an arbitrary position.
+     * Used by the drag-position screen so the preview matches in-game 1:1.
+     */
+    public void renderAtForEditor(int x, int y) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer == null || columns.isEmpty()) return;
+        if (OverlayTheme.isMellow(LazifyConfig.INSTANCE.getOverlayTheme())) return;
+
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        int oldX = startX, oldY = startY;
+        startX = x;
+        startY = y;
+        doColumns(false);
+        background = cfg.getBackgroundColor();
+        borderColorRGB = cfg.getOutlineColor();
+        borderWidth = cfg.getOutlineWidth();
+
+        float scale = cfg.getOverlayScale();
+        boolean scaled = OverlayRenderer.pushScale(scale, startX, startY);
+        try {
+            renderOverlayContent();
+        } finally {
+            OverlayRenderer.popScale(scaled);
+            startX = oldX;
+            startY = oldY;
+            doColumns(false);
+        }
+    }
+
     private void renderOverlayContent() {
-        boolean nerdify = OverlayTheme.isNerdify(LazifyConfig.INSTANCE.getOverlayTheme());
-        boolean textShadow = !nerdify;
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        // Refresh layout / outline / BG each frame so Appearance edits apply live
+        offsetY = cfg.getOverlayRowGap();
+        doColumns(false);
+        borderColorRGB = cfg.getOutlineColor();
+        borderWidth = cfg.getOutlineWidth();
+        background = cfg.getBackgroundColor();
+
+        boolean nerdify = OverlayTheme.isNerdify(cfg.getOverlayTheme());
+        boolean textShadow = cfg.isTextShadow();
         int cellPad = nerdify ? OverlayTheme.cellPad() : 0;
+        int inset = overlayInset();
 
-        OverlayRenderer.drawRect(startX, startY, endX, endY, background);
+        float radius = cfg.getBorderRadius();
+        // Background always fills (rounded when radius > 0); outline sits on the same edge
+        OverlayRenderer.drawRoundedRect(startX, startY, endX, endY, radius, background);
 
-        if (nerdify) {
-            OverlayRenderer.drawBorderRect(startX, startY, endX, endY, borderColorRGB);
-        } else {
-            OverlayRenderer.drawLine2D(startX, startY, endX, startY, borderWidth, borderColorRGB);
-            OverlayRenderer.drawLine2D(endX, startY, endX, endY, borderWidth, borderColorRGB);
-            OverlayRenderer.drawLine2D(endX, endY, startX, startY + (endY - startY), borderWidth, borderColorRGB);
-            OverlayRenderer.drawLine2D(startX, startY + (endY - startY), startX, startY, borderWidth, borderColorRGB);
+        boolean drawOutline = cfg.isOutlineEnabled();
+        if (drawOutline) {
+            OverlayRenderer.drawRoundedBorder(
+                    startX, startY, endX, endY, radius, borderWidth, borderColorRGB);
         }
 
-        int lineHeight = nerdify ? OverlayRenderer.nerdifyLineHeight()
-                : OverlayRenderer.getFontHeight() + offsetY;
-        int headerY = nerdify ? startY + OverlayTheme.headerPadTop() : startY + offsetY;
+        int fontH = OverlayRenderer.getFontHeight();
+        int lineHeight = nerdify ? OverlayRenderer.nerdifyLineHeight() : fontH + offsetY;
+        int headerY = nerdify
+                ? startY + inset + OverlayTheme.headerPadTop()
+                : startY + inset;
 
-        // Column headers
+        // Column headers — always centered in column (widths already include bold)
         for (ColumnDef col : columns) {
             if (!col.isEnabled()) continue;
             int x = col.getPosition();
-            String header = nerdify ? OverlayTheme.headerFor(col.getKey()) : col.getHeader();
+            String header = headerTextFor(col, nerdify);
             int hw = OverlayRenderer.getFontWidth(header);
             if (nerdify) {
                 if (OverlayTheme.isNumericCol(col.getKey())) {
@@ -1582,26 +2115,36 @@ public class OverlayManager {
                 } else {
                     x += cellPad;
                 }
-            } else if (!col.getKey().equals(PLAYER_KEY) && !col.getKey().equals(RANK_KEY)) {
-                x += (col.getMaxwidth() - hw) / 2;
+            } else {
+                x += Math.max(0, (col.getMaxwidth() - hw) / 2);
             }
-            OverlayRenderer.drawString(header, x, headerY, columnTitles, textShadow);
+            OverlayRenderer.drawString(header, x, headerY, headerColorFor(col.getKey()), textShadow);
         }
 
-        int headerSepY = startY + OverlayTheme.headerPadTop() + OverlayRenderer.getFontHeight()
+        int headerSepY = startY + inset + OverlayTheme.headerPadTop() + fontH
                 + OverlayTheme.headerSeparatorGap();
-        if (nerdify) {
-            OverlayRenderer.drawRect(startX + 1, headerSepY, endX - 1, headerSepY + 1, borderColorRGB);
+        if (nerdify && drawOutline) {
+            OverlayRenderer.drawRect(startX + inset, headerSepY, endX - inset, headerSepY + 1, borderColorRGB);
         }
-        int y = nerdify ? headerSepY + OverlayTheme.rowGapAfterSeparator()
-                : startY + lineHeight + 5;
+        // Player rows share the same horizontal inset as headers (via column positions)
+        int y = nerdify
+                ? headerSepY + OverlayTheme.rowGapAfterSeparator()
+                : startY + inset + fontH + 5;
 
+        int rowIndex = 0;
         synchronized (currentPlayers) {
             for (String uuid : currentPlayers) {
                 Map<String, Object> ps = overlayPlayers.get(uuid);
                 if (ps == null) { overlayPlayers.remove(uuid); continue; }
 
+                int tint = resolveRowTint(uuid, ps, rowIndex);
+                if (tint != 0) {
+                    OverlayRenderer.drawRect(startX + 1, y - 1, endX - 1, y + OverlayRenderer.getFontHeight() + 1, tint);
+                }
+
                 boolean isNicked = Boolean.TRUE.equals(ps.get("nicked"));
+                boolean isDenicked = Boolean.TRUE.equals(ps.get("denicked"))
+                        || nickRealUuid.containsKey(uuid);
                 boolean isError  = Boolean.TRUE.equals(ps.get("error"));
 
                 for (ColumnDef col : columns) {
@@ -1612,7 +2155,8 @@ public class OverlayManager {
                     String stringVal = String.valueOf(statValue);
                     int    x = col.getPosition();
 
-                    if (isNicked) {
+                    // Unresolved nicks hide most stats; denicked rows keep real stats + nick UI
+                    if (isNicked && !isDenicked) {
                         if (key.equals(RANK_KEY)) {
                             statValue = ColorUtil.formatRankColumn(true, "");
                         } else if (!key.equals(PLAYER_KEY) && !key.equals(ENCOUNTERS_KEY)) {
@@ -1626,13 +2170,21 @@ public class OverlayManager {
                         } else if (!teams.containsKey(uuid) && key.equals(PLAYER_KEY)) {
                             statValue = "\u00a7e" + stringVal.replaceAll("\u00a7.", "");
                         }
+                    } else if (isDenicked) {
+                        if (key.equals(RANK_KEY)) {
+                            statValue = ColorUtil.formatRankColumn(true, "");
+                        } else if (key.equals(URCHIN_KEY)) {
+                            statValue = formatNickTagsColumn(
+                                    ps.get(URCHIN_KEY) != null ? ps.get(URCHIN_KEY).toString() : null);
+                        }
+                        // Keep colored nick > real name (do not strip)
                     } else if (isError && (statValue == null || stringVal.isEmpty())) {
                         statValue = "\u00a74E";
                     }
 
                     switch (key) {
                         case PLAYER_KEY:
-                            if (isNicked && !teams.containsKey(uuid)) {
+                            if (isNicked && !isDenicked && !teams.containsKey(uuid)) {
                                 statValue = "\u00a7e" + stringVal.replaceAll("\u00a7.", "");
                             }
                             if (isError && (statValue == null || stringVal.isEmpty() || stringVal.equals("\u00a77-"))) {
@@ -1655,13 +2207,19 @@ public class OverlayManager {
                             }
                             break;
                         case ENCOUNTERS_KEY:
-                            if (statValue == null || stringVal.isEmpty()) statValue = "\u00a7a1";
+                            if (statValue == null || stringVal.isEmpty()) statValue = "1";
                             break;
                     }
 
-                    String text = statValue != null ? statValue.toString() : "";
+                    String text = formatDisplayStat(key, ps, statValue != null ? statValue.toString() : "");
                     if (nerdify && !text.isEmpty()) {
                         text = OverlayTheme.styleCell(key, text, ps, uuid);
+                    }
+                    int drawColor = -1;
+                    Integer liveRgb = liveStatRgb(key, ps);
+                    if (liveRgb != null) {
+                        text = ColorUtil.strip(text);
+                        drawColor = liveRgb;
                     }
                     int    tw   = OverlayRenderer.getFontWidth(text);
                     if (key.equals(PLAYER_KEY)) {
@@ -1680,9 +2238,10 @@ public class OverlayManager {
                             x += cellPad;
                         }
                     }
-                    OverlayRenderer.drawString(text, x, y, -1, textShadow);
+                    OverlayRenderer.drawString(text, x, y, drawColor, textShadow);
                 }
                 y += lineHeight;
+                rowIndex++;
             }
         }
     }
@@ -1738,17 +2297,30 @@ public class OverlayManager {
             partyMembers.clear();
             parsingPartyList = false;
             debug("No party detected");
-        }
-        if (msg.startsWith("Party Leader:") || msg.startsWith("Party Members") || msg.startsWith("Party Moderators")) {
+            if (suppressPartyChat) {
+                suppressPartyChat = false;
+                return false;
+            }
+        } else if (msg.startsWith("Party Leader:") || msg.startsWith("Party Members") || msg.startsWith("Party Moderators")) {
             if (msg.startsWith("Party Leader:")) {
                 partyMembers.clear();
                 debug("Parsing party list...");
             }
             parsingPartyList = true;
             parsePartyLine(msg);
-        } else if (parsingPartyList && msg.startsWith("-----")) {
-            parsingPartyList = false;
-            debug("Party members: " + partyMembers.size() + " found");
+            if (suppressPartyChat) return false;
+        } else if (msg.startsWith("-----") && (parsingPartyList || suppressPartyChat)) {
+            if (parsingPartyList) {
+                parsingPartyList = false;
+                debug("Party members: " + partyMembers.size() + " found");
+                if (suppressPartyChat) {
+                    suppressPartyChat = false;
+                    return false;
+                }
+            } else if (suppressPartyChat) {
+                // Opening ----- before Party Leader: — keep suppress active
+                return false;
+            }
         }
 
         // Auto-trigger /who when someone joins (only needed for join-time sorting)
@@ -1886,6 +2458,28 @@ public class OverlayManager {
                 if (!victim.isEmpty()) {
                     debug("Final kill detected: victim=" + victim + " | inBwPregame=" + inBwPregame + " status=" + status);
                     removePlayerByName(victim);
+                }
+            }
+        }
+
+        // Disconnect / reconnect mid-game (and pregame)
+        if (inBwPregame || status >= 2) {
+            Matcher disc = PLAYER_DISCONNECT.matcher(msg);
+            if (!disc.matches()) disc = PLAYER_QUIT.matcher(msg);
+            if (disc.matches()) {
+                String name = disc.group(1);
+                debug("Disconnect detected: " + name + " | inBwPregame=" + inBwPregame + " status=" + status);
+                removePlayerByName(name);
+            } else {
+                Matcher recon = PLAYER_RECONNECT.matcher(msg);
+                if (recon.matches()) {
+                    String name = recon.group(1);
+                    if (ColorUtil.hasObfuscationBefore(formatted, name)) {
+                        debug("Reconnect skipped (obfuscated): " + name);
+                    } else {
+                        debug("Reconnect detected: " + name + " | inBwPregame=" + inBwPregame + " status=" + status);
+                        addChatPlayer(name, currentLobby);
+                    }
                 }
             }
         }
@@ -2274,11 +2868,12 @@ public class OverlayManager {
                 }
             }
             if (targetUuid != null) {
-                debug("Removing final-killed player: " + name + " uuid=" + targetUuid);
+                debug("Removing player from overlay: " + name + " uuid=" + targetUuid);
                 overlayPlayers.remove(targetUuid);
                 currentPlayers.remove(targetUuid);
+                doColumns(false);
             } else {
-                debug("Final kill: player " + name + " not found in overlay");
+                debug("Remove by name: " + name + " not found in overlay");
             }
         }
     }
@@ -2313,6 +2908,7 @@ public class OverlayManager {
     // ==========================================================================
 
     public void onWorldChange() {
+        MellowTabOverlay.resetScroll();
         debug("World change: clearing overlay, resetting state | was lobby=" + currentLobby + " status=" + status);
         dowho = true;
         didwho = false;
@@ -2322,6 +2918,7 @@ public class OverlayManager {
         teamThreatSent = false;
         partySent = false;
         parsingPartyList = false;
+        suppressPartyChat = false;
         currentBwMode = -1;
         lobbyMaxPlayers = -1;
         overlayTicks = 0;
@@ -2473,31 +3070,37 @@ public class OverlayManager {
             double finalDeaths = Double.parseDouble(overall.get("final_deaths", "0"));
             if (finalDeaths == 0 && fkdr == 0 && finalKills == 0) stats.put("nofinaldeaths", "\u00a75Z");
             if (fkdr == 0 && finalDeaths > 0) fkdr = finalKills / finalDeaths;
-            fkdr = fkdr < 10 ? ColorUtil.round(fkdr, 2) : ColorUtil.round(fkdr, 1);
+            int decimals = LazifyConfig.INSTANCE.getFkdrDecimals();
+            fkdr = ColorUtil.round(fkdr, decimals);
             double index = star * Math.pow(fkdr, 2);
-            String fkdrStr = ColorUtil.formatDoubleStr(fkdr);
-            stats.put(FKDR_KEY,   LazifyConfig.INSTANCE.isFkdrColors()
-                    ? ColorUtil.getFkdrColor(fkdrStr, LazifyConfig.INSTANCE.getFkdrColors())
-                    : "\u00a7f" + fkdrStr);
+            // Plain text — RGB + decimals applied live at render
+            stats.put(FKDR_KEY, ColorUtil.formatRatio(fkdr, decimals));
             stats.put(FKDR_VALUE, fkdr);
             stats.put(INDEX_VALUE, index);
+
+            // Overall WLR / BBLR / KDR
+            putRatioStat(stats, WLR_KEY, WLR_VALUE, overall, "wlr", "wins", "losses");
+            putRatioStat(stats, BBLR_KEY, BBLR_VALUE, overall, "bblr", "beds_broken", "beds_lost");
+            putRatioStat(stats, KDR_KEY, KDR_VALUE, overall, "kdr", "kills", "deaths");
 
             // Session
             long lastLogin  = parseEpochMs(network.exists() ? network.get("last_login",  network.get("lastLogin",  "0")) : "0");
             long lastLogout = parseEpochMs(network.exists() ? network.get("last_logout", network.get("lastLogout", "0")) : "0");
             boolean statusOn = lastLogin != 0;
-            String coloredSession = "\u00a7cAPI";
+            String sessionText = "API";
+            double sessionMins = -1;
             if (statusOn) {
                 if (lastLogin - lastLogout > -10000) {
                     long nowMs = System.currentTimeMillis();
-                    String sessionStr = ColorUtil.calculateRelativeTimestamp(lastLogin, nowMs);
-                    coloredSession = ColorUtil.getSessionColor(lastLogin, nowMs, sessionStr);
+                    sessionText = ColorUtil.calculateRelativeTimestamp(lastLogin, nowMs);
+                    sessionMins = (nowMs - lastLogin) / 60000.0;
                 } else {
-                    coloredSession = "\u00a7cOFFLINE";
+                    sessionText = "OFFLINE";
                 }
             }
-            stats.put(SESSION_KEY,   coloredSession);
+            stats.put(SESSION_KEY, sessionText);
             stats.put(SESSION_VALUE, lastLogin * -1.0);
+            stats.put(SESSION_DURATION, sessionMins);
 
             // Winstreak — fall back to Bordic when Hypixel winstreak API is disabled
             JsonWrapper modes = bw.object("modes");
@@ -2542,6 +3145,19 @@ public class OverlayManager {
             stats.put("error", true);
         }
         return stats;
+    }
+
+    private void putRatioStat(Map<String, Object> stats, String key, String valueKey,
+                              JsonWrapper overall, String ratioKey, String numKey, String denKey) {
+        double ratio = Double.parseDouble(overall.get(ratioKey, "0"));
+        double num = Double.parseDouble(overall.get(numKey, "0"));
+        double den = Double.parseDouble(overall.get(denKey, "0"));
+        if (ratio == 0 && den > 0) ratio = num / den;
+        else if (ratio == 0 && den == 0 && num > 0) ratio = num;
+        int decimals = LazifyConfig.INSTANCE.getFkdrDecimals();
+        ratio = ColorUtil.round(ratio, decimals);
+        stats.put(key, ColorUtil.formatRatio(ratio, decimals));
+        stats.put(valueKey, ratio);
     }
 
     private static long parseEpochMs(String raw) {
@@ -2595,7 +3211,8 @@ public class OverlayManager {
         }
 
         String plain = suffix.isEmpty() ? String.valueOf(displayValue) : displayValue + " " + suffix;
-        stats.put(WINSTREAK_KEY, ColorUtil.getWinstreakColor(plain));
+        // Plain text — RGB from wsScale applied at render
+        stats.put(WINSTREAK_KEY, displayValue == 0 ? "" : plain);
         stats.put(WINSTREAK_VALUE, (double) displayValue);
     }
 
@@ -2715,10 +3332,8 @@ public class OverlayManager {
             if (tagCache.containsKey(tagUuid)) {
                 debugFromThread("Tag cache hit for " + tagUuid);
                 TagInfo cached = tagCache.get(tagUuid);
-                if (cached != null && cached.hasAnyTag() && isInOverlay(overlayUuid) && currentLobby.equals(lobby)) {
-                    Map<String, Object> tagData = new ConcurrentHashMap<>();
-                    tagData.put(URCHIN_KEY, cached.overlayDisplay());
-                    addToOverlay(overlayUuid, tagData);
+                if (isInOverlay(overlayUuid) && currentLobby.equals(lobby)) {
+                    applyTagsToOverlay(overlayUuid, cached);
                 }
                 return;
             }
@@ -2726,6 +3341,10 @@ public class OverlayManager {
             boolean hasSeraphKey = seraphKey() != null && !seraphKey().isEmpty();
             if (!hasUrchinKey && !hasSeraphKey) {
                 debugFromThread("Tags skipped for " + tagUuid + " (no " + URCHIN_CORAL_LABEL + " or Seraph key set)");
+                // Still ensure nick marker stays for denicked/nicked rows
+                if (isInOverlay(overlayUuid) && currentLobby.equals(lobby)) {
+                    applyTagsToOverlay(overlayUuid, null);
+                }
                 return;
             }
 
@@ -2741,17 +3360,15 @@ public class OverlayManager {
 
             tagCache.put(tagUuid, info);
 
-            if (!info.hasAnyTag()) return;
-
             debugFromThread("Tags for " + tagUuid + " (overlay " + overlayUuid + "): urchin="
                     + info.hasUrchin + " seraph=" + info.hasSeraph);
 
-            String username = uuidToName.getOrDefault(overlayUuid, uuidToName.getOrDefault(tagUuid, tagUuid));
-            Map<String, Object> tagData = new ConcurrentHashMap<>();
-            tagData.put(URCHIN_KEY, info.overlayDisplay());
-            if (isInOverlay(overlayUuid) && currentLobby.equals(lobby)) addToOverlay(overlayUuid, tagData);
+            if (isInOverlay(overlayUuid) && currentLobby.equals(lobby)) {
+                applyTagsToOverlay(overlayUuid, info);
+            }
 
-            if (LazifyConfig.INSTANCE.isSendUrchinReasonToChat()) {
+            if (info.hasAnyTag() && LazifyConfig.INSTANCE.isSendUrchinReasonToChat() && shouldAnnounceInChat()) {
+                String username = uuidToName.getOrDefault(overlayUuid, uuidToName.getOrDefault(tagUuid, tagUuid));
                 if (info.hasUrchin) {
                     notifyTagInChat(username, URCHIN_CORAL_LABEL, info.urchinType, info.urchinReason);
                 }
@@ -2760,6 +3377,34 @@ public class OverlayManager {
                 }
             }
         }
+    }
+
+    private void applyTagsToOverlay(String overlayUuid, TagInfo info) {
+        Map<String, Object> existing = overlayPlayers.get(overlayUuid);
+        boolean nickedRow = existing != null && (Boolean.TRUE.equals(existing.get("nicked"))
+                || Boolean.TRUE.equals(existing.get("denicked"))
+                || nickRealUuid.containsKey(overlayUuid)
+                || isNickedKey(overlayUuid));
+
+        Map<String, Object> tagData = new ConcurrentHashMap<>();
+        String cheater = (info != null && info.hasAnyTag()) ? info.overlayDisplay() : "";
+        if (nickedRow) {
+            tagData.put(URCHIN_KEY, formatNickTagsColumn(cheater));
+            tagData.put("apinicked", "\u00a7eN");
+            tagData.put("nicked", true);
+            if (existing != null && Boolean.TRUE.equals(existing.get("denicked"))) {
+                tagData.put("denicked", true);
+            }
+        } else if (info != null && info.hasAnyTag()) {
+            tagData.put(URCHIN_KEY, cheater);
+        } else {
+            return;
+        }
+        if (info != null) {
+            if (info.hasUrchin) tagData.put("urchinTagType", info.urchinType);
+            if (info.hasSeraph) tagData.put("seraphTagType", info.seraphType);
+        }
+        addToOverlay(overlayUuid, tagData);
     }
 
     private void fetchUrchinCoralTag(String uuid, String username, TagInfo info) {
@@ -2936,7 +3581,9 @@ public class OverlayManager {
         if (pingCache.containsKey(fetchUuid)) {
             debugFromThread("Ping cache hit for " + fetchUuid);
             Map<String, Object> cached = new ConcurrentHashMap<>();
-            cached.put(PING_KEY, ColorUtil.getPingColor(pingCache.get(fetchUuid)));
+            int cachedPing = pingCache.get(fetchUuid);
+            cached.put(PING_KEY, cachedPing > 0 ? String.valueOf(cachedPing) : "-");
+            cached.put(PING_VALUE, (double) cachedPing);
             if (isInOverlay(overlayUuid) && currentLobby.equals(lobby)) addToOverlay(overlayUuid, cached);
             return;
         }
@@ -2955,7 +3602,8 @@ public class OverlayManager {
             if (avg < 0) return;
             pingCache.put(fetchUuid, avg);
             Map<String, Object> pingData = new ConcurrentHashMap<>();
-            pingData.put(PING_KEY, ColorUtil.getPingColor(avg));
+            pingData.put(PING_KEY, avg > 0 ? String.valueOf(avg) : "-");
+            pingData.put(PING_VALUE, (double) avg);
             if (isInOverlay(overlayUuid) && currentLobby.equals(lobby)) addToOverlay(overlayUuid, pingData);
         } catch (Exception e) {
             debugFromThread("Bordic ping exception for " + fetchUuid + ": " + e.getMessage());
@@ -3008,23 +3656,53 @@ public class OverlayManager {
 
     // All setting names (for tab complete)
     public static final String[] ALL_SETTINGS = {
-        "teams","teamprefix","showyourself","showranks","removefinalkill","autotablist","clearonwho","middleclickshop","skindenick",
-        "fkdrcolors","autowho","whodelay","hidewho","dodgewarning","dodgethreshold","teamthreatchat","teamthreatthreshold",
+        "teams","teamprefix","showyourself","showranks","removefinalkill","autotablist","clearonwho","disableinlobby","middleclickshop","skindenick",
+        "fkdrcolors","autowho","whodelay","hidewho","autopl","hidepl","dodgewarning","dodgethreshold","teamthreatchat","teamthreatthreshold",
         "threatfkdrweight","threatstarweight","threatwinstreakweight","threaturchinweight","threatteamsizeweight",
         "threatencounterweight","threatnickweight","nohurtcam","antidebuff","teamfkdrchat",
-        "sendnicked","sendurchinreason","keybindhold","showontab","overlayovertab","keybind",
+        "sendnicked","sendurchinreason","keybindhold","showontab","overlayovertab","statsdisplay","keybind",
         "debug","col","sortby","sortmode","winstreak","enctimeout",
-        "x","y","colgap","rowgap","scale","bgopacity","bghue","headerhue","borderhue","overlaytheme"
+        "x","y","colgap","rowgap","pad","scale","bgopacity","bgr","bgg","bgb","bghue","headerhue",
+        "outline","outlinechroma","outliner","outlineg","outlineb","outlinewidth","borderradius","borderhue",
+        "overlaytheme","textshadow","headerbold","stripes","fkdrdecimals","abbrev","pingstyle"
     };
     public static final String[] ALL_COLUMNS = {
-        "encounters","username","rank","star","fkdr","winstreaks","urchin","session","level","ping"
+        "encounters","username","rank","star","fkdr","wlr","bblr","kdr","winstreaks",
+        "urchin","session","level","ping"
     };
 
+    /** Set by /ov|/lazify with no args; opened next client tick after chat closes. */
+    private volatile boolean pendingOpenClickGui = false;
+
+    /** Open the click GUI (used by bare /ov, /overlay, /lazify). */
+    public void openClickGui() {
+        // Chat closes after the command and would wipe displayGuiScreen if we open immediately
+        pendingOpenClickGui = true;
+    }
+
+    /** Called from EventHandler tick — opens GUI deferred from chat commands. */
+    public void tickPendingClickGui() {
+        if (!pendingOpenClickGui) return;
+        pendingOpenClickGui = false;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc != null) {
+            mc.displayGuiScreen(new GuiClickMenu());
+        }
+    }
+
     public void handleCommand(String[] args) {
-        if (args.length == 0) { printHelp(); return; }
+        if (args == null || args.length == 0
+                || (args.length == 1 && (args[0] == null || args[0].trim().isEmpty()))) {
+            openClickGui();
+            return;
+        }
         if (args.length == 1 && args[0].equals("2")) { printStatus(); return; }
 
         String cmd = args[0].toLowerCase();
+        if (cmd.equals("help") || cmd.equals("1")) {
+            printHelp();
+            return;
+        }
 
         // Backward compat: /ov set <name> [val] → /ov <name> [val]
         if (cmd.equals("set")) {
@@ -3260,6 +3938,8 @@ public class OverlayManager {
                     cfg.setAutoTablist(args.length > 1 ? parseBool(args[1]) : !cfg.isAutoTablist()); break;
                 case "clearonwho":
                     cfg.setClearOnWho(args.length > 1 ? parseBool(args[1]) : !cfg.isClearOnWho()); break;
+                case "disableinlobby":
+                    cfg.setDisableInLobby(args.length > 1 ? parseBool(args[1]) : !cfg.isDisableInLobby()); break;
                 case "middleclickshop":
                     cfg.setMiddleClickShop(args.length > 1 ? parseBool(args[1]) : !cfg.isMiddleClickShop()); break;
                 case "skindenick":
@@ -3270,6 +3950,10 @@ public class OverlayManager {
                     cfg.setAutoWho(args.length > 1 ? parseBool(args[1]) : !cfg.isAutoWho()); break;
                 case "hidewho":
                     cfg.setHideWho(args.length > 1 ? parseBool(args[1]) : !cfg.isHideWho()); break;
+                case "autopl":
+                    cfg.setAutoPl(args.length > 1 ? parseBool(args[1]) : !cfg.isAutoPl()); break;
+                case "hidepl":
+                    cfg.setHidePl(args.length > 1 ? parseBool(args[1]) : !cfg.isHidePl()); break;
                 case "dodgewarning":
                     cfg.setDodgeWarning(args.length > 1 ? parseBool(args[1]) : !cfg.isDodgeWarning()); break;
                 case "teamthreatchat":
@@ -3290,6 +3974,15 @@ public class OverlayManager {
                     cfg.setShowOnTab(args.length > 1 ? parseBool(args[1]) : !cfg.isShowOnTab()); break;
                 case "overlayovertab":
                     cfg.setOverlayOverTab(args.length > 1 ? parseBool(args[1]) : !cfg.isOverlayOverTab()); break;
+                case "statsdisplay":
+                case "overlaytheme":
+                    if (args.length < 2) {
+                        print(PREFIX + "\u00a7eoverlaytheme: \u00a73" + cfg.getOverlayTheme()
+                                + " \u00a7e(" + OverlayTheme.themeName(cfg.getOverlayTheme())
+                                + "). 0=Lazify 1=Nerdify 2=Mellow");
+                        return;
+                    }
+                    cfg.setOverlayTheme(parseOverlayTheme(args[1])); break;
                 case "debug":
                     cfg.setDebug(args.length > 1 ? parseBool(args[1]) : !cfg.isDebug()); break;
 
@@ -3348,6 +4041,9 @@ public class OverlayManager {
                 case "rowgap":
                     if (args.length < 2) { print(PREFIX + "\u00a7erowgap: \u00a73" + cfg.getOverlayRowGap() + " \u00a7e(0-20)"); return; }
                     cfg.setOverlayRowGap(clamp(Integer.parseInt(args[1]), 0, 20)); break;
+                case "pad":
+                    if (args.length < 2) { print(PREFIX + "\u00a7epad: \u00a73" + cfg.getOverlayPad() + " \u00a7e(0-24)"); return; }
+                    cfg.setOverlayPad(clamp(Integer.parseInt(args[1]), 0, 24)); break;
                 case "scale":
                     if (args.length < 2) {
                         print(PREFIX + "\u00a7escale: \u00a73" + cfg.getOverlayScalePercent()
@@ -3358,22 +4054,63 @@ public class OverlayManager {
                 case "bgopacity":
                     if (args.length < 2) { print(PREFIX + "\u00a7ebgopacity: \u00a73" + cfg.getBgOpacity() + " \u00a7e(0-255)"); return; }
                     cfg.setBgOpacity(clamp(Integer.parseInt(args[1]), 0, 255)); break;
+                case "bgr":
+                    if (args.length < 2) { print(PREFIX + "\u00a7ebgr: \u00a73" + cfg.getBgR() + " \u00a7e(0-255)"); return; }
+                    cfg.setBgR(clamp(Integer.parseInt(args[1]), 0, 255)); break;
+                case "bgg":
+                    if (args.length < 2) { print(PREFIX + "\u00a7ebgg: \u00a73" + cfg.getBgG() + " \u00a7e(0-255)"); return; }
+                    cfg.setBgG(clamp(Integer.parseInt(args[1]), 0, 255)); break;
+                case "bgb":
+                    if (args.length < 2) { print(PREFIX + "\u00a7ebgb: \u00a73" + cfg.getBgB() + " \u00a7e(0-255)"); return; }
+                    cfg.setBgB(clamp(Integer.parseInt(args[1]), 0, 255)); break;
                 case "bghue":
-                    if (args.length < 2) { print(PREFIX + "\u00a7ebghue: \u00a73" + cfg.getBgHue() + " \u00a7e(0=black, 360=chroma)"); return; }
+                    if (args.length < 2) { print(PREFIX + "\u00a7ebghue (legacy): sets bg RGB from hue"); return; }
                     cfg.setBgHue(clamp(Integer.parseInt(args[1]), 0, 360)); break;
                 case "headerhue":
-                    if (args.length < 2) { print(PREFIX + "\u00a7eheaderhue: \u00a73" + cfg.getHeaderHue() + " \u00a7e(0-360)"); return; }
+                    if (args.length < 2) { print(PREFIX + "\u00a7eheaderhue (legacy): sets all header RGB from hue"); return; }
                     cfg.setHeaderHue(clamp(Integer.parseInt(args[1]), 0, 360)); break;
+                case "outline":
+                    if (args.length < 2) { print(PREFIX + "\u00a7eoutline: \u00a73" + cfg.isOutlineEnabled()); return; }
+                    cfg.setOutlineEnabled(parseBool(args[1])); break;
+                case "outlinechroma":
+                    if (args.length < 2) { print(PREFIX + "\u00a7eoutlinechroma: \u00a73" + cfg.isOutlineChroma()); return; }
+                    cfg.setOutlineChroma(parseBool(args[1])); break;
+                case "outliner":
+                    if (args.length < 2) { print(PREFIX + "\u00a7eoutliner: \u00a73" + cfg.getOutlineR()); return; }
+                    cfg.setOutlineR(clamp(Integer.parseInt(args[1]), 0, 255)); break;
+                case "outlineg":
+                    if (args.length < 2) { print(PREFIX + "\u00a7eoutlineg: \u00a73" + cfg.getOutlineG()); return; }
+                    cfg.setOutlineG(clamp(Integer.parseInt(args[1]), 0, 255)); break;
+                case "outlineb":
+                    if (args.length < 2) { print(PREFIX + "\u00a7eoutlineb: \u00a73" + cfg.getOutlineB()); return; }
+                    cfg.setOutlineB(clamp(Integer.parseInt(args[1]), 0, 255)); break;
+                case "outlinewidth":
+                    if (args.length < 2) { print(PREFIX + "\u00a7eoutlinewidth: \u00a73" + cfg.getOutlineWidth() + " \u00a7e(0.5-8)"); return; }
+                    cfg.setOutlineWidth(Double.parseDouble(args[1])); break;
+                case "borderradius":
+                    if (args.length < 2) { print(PREFIX + "\u00a7eborderradius: \u00a73" + cfg.getBorderRadius() + " \u00a7e(0-16)"); return; }
+                    cfg.setBorderRadius(clamp(Integer.parseInt(args[1]), 0, 16)); break;
+                case "textshadow":
+                    if (args.length < 2) { print(PREFIX + "\u00a7etextshadow: \u00a73" + cfg.isTextShadow()); return; }
+                    cfg.setTextShadow(parseBool(args[1])); break;
+                case "headerbold":
+                    if (args.length < 2) { print(PREFIX + "\u00a7eheaderbold: \u00a73" + cfg.isHeaderBold()); return; }
+                    cfg.setHeaderBold(parseBool(args[1])); break;
+                case "stripes":
+                    if (args.length < 2) { print(PREFIX + "\u00a7estripes: \u00a73" + cfg.isStripeEnabled()); return; }
+                    cfg.setStripeEnabled(parseBool(args[1])); break;
+                case "fkdrdecimals":
+                    if (args.length < 2) { print(PREFIX + "\u00a7efkdrdecimals: \u00a73" + cfg.getFkdrDecimals() + " \u00a7e(0-3)"); return; }
+                    cfg.setFkdrDecimals(clamp(Integer.parseInt(args[1]), 0, 3)); break;
+                case "abbrev":
+                    if (args.length < 2) { print(PREFIX + "\u00a7eabbrev: \u00a73" + cfg.isAbbreviateNumbers()); return; }
+                    cfg.setAbbreviateNumbers(parseBool(args[1])); break;
+                case "pingstyle":
+                    if (args.length < 2) { print(PREFIX + "\u00a7epingstyle: \u00a73" + cfg.getPingStyle() + " \u00a7e(0=number, 1=ms)"); return; }
+                    cfg.setPingStyle(clamp(Integer.parseInt(args[1]), 0, 1)); break;
                 case "borderhue":
-                    if (args.length < 2) { print(PREFIX + "\u00a7eborderhue: \u00a73" + cfg.getBorderHue() + " \u00a7e(0-360)"); return; }
+                    if (args.length < 2) { print(PREFIX + "\u00a7eborderhue: \u00a73" + cfg.getBorderHue() + " \u00a7e(legacy)"); return; }
                     cfg.setBorderHue(clamp(Integer.parseInt(args[1]), 0, 360)); break;
-                case "overlaytheme":
-                    if (args.length < 2) {
-                        print(PREFIX + "\u00a7eoverlaytheme: \u00a73" + cfg.getOverlayTheme()
-                                + " \u00a7e(" + OverlayTheme.themeName(cfg.getOverlayTheme()) + "). 0=Default 1=Nerdify");
-                        return;
-                    }
-                    cfg.setOverlayTheme(clamp(Integer.parseInt(args[1]), 0, 1)); break;
 
                 // ── Special: keybind ──────────────────────────────────────────
                 case "keybind": {
@@ -3407,13 +4144,16 @@ public class OverlayManager {
                         case "rank":       curVal = cfg.isColRank();       break;
                         case "star":       curVal = cfg.isColStar();       break;
                         case "fkdr":       curVal = cfg.isColFkdr();       break;
+                        case "wlr":        curVal = cfg.isColWlr();        break;
+                        case "bblr":       curVal = cfg.isColBblr();       break;
+                        case "kdr":        curVal = cfg.isColKdr();        break;
                         case "winstreaks": curVal = cfg.isColWinstreaks(); break;
                         case "urchin":     curVal = cfg.isColUrchin();     break;
                         case "session":    curVal = cfg.isColSession();    break;
                         case "level":      curVal = cfg.isColLevel();      break;
                         case "ping":       curVal = cfg.isColPing();       break;
                         default: print(PREFIX + "\u00a7eUnknown column: \u00a73" + args[1]
-                            + "\u00a7e. Options: encounters username rank star fkdr winstreaks urchin session level ping"); return;
+                            + "\u00a7e. Options: " + String.join(" ", ALL_COLUMNS)); return;
                     }
                     // If arg[2] is a number, move column to that 1-indexed position
                     if (args.length > 2) {
@@ -3433,6 +4173,9 @@ public class OverlayManager {
                         case "rank":       cfg.setColRank(newVal);       break;
                         case "star":       cfg.setColStar(newVal);       break;
                         case "fkdr":       cfg.setColFkdr(newVal);       break;
+                        case "wlr":        cfg.setColWlr(newVal);        break;
+                        case "bblr":       cfg.setColBblr(newVal);       break;
+                        case "kdr":        cfg.setColKdr(newVal);        break;
                         case "winstreaks": cfg.setColWinstreaks(newVal); break;
                         case "urchin":     cfg.setColUrchin(newVal);     break;
                         case "session":    cfg.setColSession(newVal);    break;
@@ -3458,7 +4201,8 @@ public class OverlayManager {
     // ── /ov help/status display ────────────────────────────────────────────────
 
     private void printHelp() {
-        print(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dLazify \u00a77\u2500\u2500\u2500  \u00a77run \u00a73/ov 2\u00a77 for settings");
+        print(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dLazify \u00a77\u2500\u2500\u2500  \u00a73/ov\u00a77 or \u00a73/lazify\u00a77 opens GUI");
+        print(PREFIX + "\u00a77\u00a73/ov 2\u00a77 \u00a7e\u2013 list settings   \u00a73/ov help\u00a77 \u00a7e\u2013 this help");
         print(PREFIX + "\u00a77sc \u00a7e<user>\u00a77 \u00a7e\u2013 add player to overlay");
         print(PREFIX + "\u00a77hide \u00a7e<user>\u00a77 \u00a7e\u2013 hide player from overlay");
         print(PREFIX + "\u00a77clearhidden\u00a77 \u00a7e\u2013 show all hidden players again");
@@ -3493,7 +4237,8 @@ public class OverlayManager {
             + settingLine("showyourself", c.isShowYourself()));
         print(PREFIX + settingLine("removefinalkill", c.isRemoveFinalKill())
             + settingLine("autotablist", c.isAutoTablist())
-            + settingLine("clearonwho", c.isClearOnWho()));
+            + settingLine("clearonwho", c.isClearOnWho())
+            + settingLine("disableinlobby", c.isDisableInLobby()));
 
         // ── Features ──
         print(PREFIX + "\u00a7d Features");
@@ -3503,7 +4248,9 @@ public class OverlayManager {
         print(PREFIX + settingLine("autowho", c.isAutoWho())
             + settingLine("whodelay", c.getWhoDelay() + "s")
             + settingLine("hidewho", c.isHideWho())
-            + settingLine("dodgewarning", c.isDodgeWarning())
+            + settingLine("autopl", c.isAutoPl())
+            + settingLine("hidepl", c.isHidePl()));
+        print(PREFIX + settingLine("dodgewarning", c.isDodgeWarning())
             + settingLine("dodgethreshold", String.valueOf(c.getDodgeThreshold())));
         print(PREFIX + settingLine("teamthreatchat", c.isTeamThreatChat())
             + settingLine("teamthreatthreshold", ColorUtil.formatDoubleStr(ColorUtil.round(c.getTeamThreatThreshold(), 2))));
@@ -3536,12 +4283,21 @@ public class OverlayManager {
             + settingLine("y", String.valueOf(c.getOverlayY()))
             + settingLine("colgap", String.valueOf(c.getOverlayColGap()))
             + settingLine("rowgap", String.valueOf(c.getOverlayRowGap()))
+            + settingLine("pad", String.valueOf(c.getOverlayPad()))
             + settingLine("scale", c.getOverlayScalePercent() + "%")
             + settingLine("bgopacity", String.valueOf(c.getBgOpacity())));
-        print(PREFIX + settingLine("bghue", String.valueOf(c.getBgHue()))
-            + settingLine("headerhue", String.valueOf(c.getHeaderHue()))
-            + settingLine("borderhue", String.valueOf(c.getBorderHue()))
+        print(PREFIX + settingLine("bgr", String.valueOf(c.getBgR()))
+            + settingLine("bgg", String.valueOf(c.getBgG()))
+            + settingLine("bgb", String.valueOf(c.getBgB()))
+            + settingLine("borderradius", String.valueOf(c.getBorderRadius()))
+            + settingLine("outlinewidth", String.valueOf(c.getOutlineWidth()))
             + settingLine("overlaytheme", c.getOverlayTheme() + " \u00a77(" + OverlayTheme.themeName(c.getOverlayTheme()) + ")"));
+        print(PREFIX + settingLine("textshadow", c.isTextShadow())
+            + settingLine("headerbold", c.isHeaderBold())
+            + settingLine("stripes", c.isStripeEnabled())
+            + settingLine("fkdrdecimals", String.valueOf(c.getFkdrDecimals()))
+            + settingLine("abbrev", c.isAbbreviateNumbers())
+            + settingLine("pingstyle", c.getPingStyle() == 1 ? "ms" : "number"));
         String[] fc = c.getFkdrColors();
         StringBuilder fcLine = new StringBuilder(" \u00a77fkdrcolor ");
         for (int i = 0; i < 7; i++) fcLine.append("\u00a7").append(fc[i]).append("\u2588");
@@ -3552,7 +4308,10 @@ public class OverlayManager {
         print(PREFIX
             + colLine("encounters", c.isColEncounters()) + colLine("username", c.isColUsername())
             + colLine("rank", c.isColRank()) + colLine("star", c.isColStar()) + colLine("fkdr", c.isColFkdr())
-            + colLine("winstreaks", c.isColWinstreaks()) + colLine("urchin", c.isColUrchin())
+            + colLine("wlr", c.isColWlr()) + colLine("bblr", c.isColBblr()) + colLine("kdr", c.isColKdr()));
+        print(PREFIX
+            + colLine("winstreaks", c.isColWinstreaks())
+            + colLine("urchin", c.isColUrchin())
             + colLine("session", c.isColSession()) + colLine("level", c.isColLevel())
             + colLine("ping", c.isColPing()));
 
@@ -3622,7 +4381,10 @@ public class OverlayManager {
         print(PREFIX
             + "  encounters " + boolStr(c.isColEncounters()) + "  username " + boolStr(c.isColUsername())
             + "  rank " + boolStr(c.isColRank()) + "  star " + boolStr(c.isColStar()) + "  fkdr " + boolStr(c.isColFkdr())
-            + "  winstreaks " + boolStr(c.isColWinstreaks()) + "  urchin " + boolStr(c.isColUrchin())
+            + "  wlr " + boolStr(c.isColWlr()) + "  bblr " + boolStr(c.isColBblr()) + "  kdr " + boolStr(c.isColKdr()));
+        print(PREFIX
+            + "  winstreaks " + boolStr(c.isColWinstreaks())
+            + "  urchin " + boolStr(c.isColUrchin())
             + "  session " + boolStr(c.isColSession()) + "  level " + boolStr(c.isColLevel())
             + "  ping " + boolStr(c.isColPing()));
         String[] order = c.getColOrder().split(",");
@@ -3647,6 +4409,18 @@ public class OverlayManager {
 
     private static boolean parseBool(String s) {
         return s.equalsIgnoreCase("true") || s.equals("1") || s.equalsIgnoreCase("on");
+    }
+
+    private static int parseOverlayTheme(String s) {
+        if (s == null) return 0;
+        String lower = s.toLowerCase();
+        if (lower.equals("mellow") || lower.equals("tab") || lower.equals("tablist")) return OverlayTheme.MELLOW;
+        if (lower.equals("nerdify")) return OverlayTheme.NERDIFY;
+        if (lower.equals("lazify") || lower.equals("default") || lower.equals("overlay") || lower.equals("hud")) {
+            return OverlayTheme.DEFAULT;
+        }
+        if (lower.equals("both")) return OverlayTheme.MELLOW;
+        return clamp(Integer.parseInt(s), 0, 2);
     }
 
     private static int clamp(int v, int min, int max) {
@@ -3677,12 +4451,15 @@ public class OverlayManager {
             case "removefinalkill":  return boolStr(c.isRemoveFinalKill());
             case "autotablist":      return boolStr(c.isAutoTablist());
             case "clearonwho":       return boolStr(c.isClearOnWho());
+            case "disableinlobby":   return boolStr(c.isDisableInLobby());
             case "middleclickshop": return boolStr(c.isMiddleClickShop());
             case "skindenick":      return boolStr(c.isSkinDenick());
             case "fkdrcolors":      return boolStr(c.isFkdrColors());
             case "autowho":         return boolStr(c.isAutoWho());
             case "whodelay":        return "\u00a7e" + c.getWhoDelay() + "s";
             case "hidewho":         return boolStr(c.isHideWho());
+            case "autopl":          return boolStr(c.isAutoPl());
+            case "hidepl":          return boolStr(c.isHidePl());
             case "dodgewarning":    return boolStr(c.isDodgeWarning());
             case "dodgethreshold":  return "\u00a7e" + c.getDodgeThreshold();
             case "teamthreatchat":  return boolStr(c.isTeamThreatChat());
@@ -3712,11 +4489,28 @@ public class OverlayManager {
             case "y":          return "\u00a7e" + c.getOverlayY();
             case "colgap":     return "\u00a7e" + c.getOverlayColGap();
             case "rowgap":     return "\u00a7e" + c.getOverlayRowGap();
+            case "pad":        return "\u00a7e" + c.getOverlayPad();
             case "scale":      return "\u00a7e" + c.getOverlayScalePercent() + "%";
             case "bgopacity":  return "\u00a7e" + c.getBgOpacity();
+            case "bgr":        return "\u00a7e" + c.getBgR();
+            case "bgg":        return "\u00a7e" + c.getBgG();
+            case "bgb":        return "\u00a7e" + c.getBgB();
             case "bghue":      return "\u00a7e" + c.getBgHue();
             case "headerhue":  return "\u00a7e" + c.getHeaderHue();
+            case "outline":    return boolStr(c.isOutlineEnabled());
+            case "outlinechroma": return boolStr(c.isOutlineChroma());
+            case "outliner":   return "\u00a7e" + c.getOutlineR();
+            case "outlineg":   return "\u00a7e" + c.getOutlineG();
+            case "outlineb":   return "\u00a7e" + c.getOutlineB();
+            case "outlinewidth": return "\u00a7e" + c.getOutlineWidth();
+            case "borderradius": return "\u00a7e" + c.getBorderRadius();
             case "borderhue":  return "\u00a7e" + c.getBorderHue();
+            case "textshadow": return boolStr(c.isTextShadow());
+            case "headerbold": return boolStr(c.isHeaderBold());
+            case "stripes":    return boolStr(c.isStripeEnabled());
+            case "fkdrdecimals": return "\u00a7e" + c.getFkdrDecimals();
+            case "abbrev":     return boolStr(c.isAbbreviateNumbers());
+            case "pingstyle":  return "\u00a7e" + c.getPingStyle() + "\u00a7e (" + (c.getPingStyle() == 1 ? "ms" : "number") + ")";
             case "overlaytheme": return "\u00a7e" + c.getOverlayTheme() + "\u00a7e (" + OverlayTheme.themeName(c.getOverlayTheme()) + ")";
             default:           return "?";
         }

@@ -104,6 +104,126 @@ public class OverlayRenderer {
         drawRect(x2 - 1, y1, x2, y2, color);
     }
 
+    /**
+     * Filled rounded rectangle. Built from quads + corner triangle fans so it
+     * stays visible under Minecraft GUI GL state (cull/depth safe).
+     */
+    public static void drawRoundedRect(float x1, float y1, float x2, float y2, float radius, int color) {
+        if (x1 > x2) { float t = x1; x1 = x2; x2 = t; }
+        if (y1 > y2) { float t = y1; y1 = y2; y2 = t; }
+        float w = x2 - x1;
+        float h = y2 - y1;
+        if (w <= 0 || h <= 0) return;
+
+        float r = Math.min(Math.max(0f, radius), Math.min(w, h) * 0.5f);
+        if (r < 0.5f) {
+            drawRect(x1, y1, x2, y2, color);
+            return;
+        }
+
+        // Axis-aligned body (always works via drawRect)
+        drawRect(x1 + r, y1, x2 - r, y2, color);
+        if (y2 - r > y1 + r + 0.01f) {
+            drawRect(x1, y1 + r, x1 + r, y2 - r, color);
+            drawRect(x2 - r, y1 + r, x2, y2 - r, color);
+        }
+
+        // Corners
+        int segs = Math.max(8, Math.min(32, (int) (r * 3f)));
+        drawCornerFan(x1 + r, y1 + r, r, 180, 270, segs, color); // top-left
+        drawCornerFan(x2 - r, y1 + r, r, 270, 360, segs, color); // top-right
+        drawCornerFan(x2 - r, y2 - r, r, 0, 90, segs, color);     // bottom-right
+        drawCornerFan(x1 + r, y2 - r, r, 90, 180, segs, color);   // bottom-left
+    }
+
+    /** Outline flush with the fill bounds (no gap). */
+    public static void drawRoundedBorder(float x1, float y1, float x2, float y2,
+                                         float radius, float lineWidth, int color) {
+        if (x1 > x2) { float t = x1; x1 = x2; x2 = t; }
+        if (y1 > y2) { float t = y1; y1 = y2; y2 = t; }
+        float w = x2 - x1;
+        float h = y2 - y1;
+        if (w <= 0 || h <= 0) return;
+
+        float r = Math.min(Math.max(0f, radius), Math.min(w, h) * 0.5f);
+        if (r < 0.5f) {
+            if (lineWidth <= 1.01f) {
+                drawBorderRect(x1, y1, x2, y2, color);
+            } else {
+                drawLine2D(x1, y1, x2, y1, lineWidth, color);
+                drawLine2D(x2, y1, x2, y2, lineWidth, color);
+                drawLine2D(x2, y2, x1, y2, lineWidth, color);
+                drawLine2D(x1, y2, x1, y1, lineWidth, color);
+            }
+            return;
+        }
+
+        beginSolid(color);
+        GlStateManager.disableCull();
+        GlStateManager.disableDepth();
+        GL11.glLineWidth(Math.max(1.0f, lineWidth));
+        GL11.glEnable(GL11.GL_LINE_SMOOTH);
+
+        int segs = Math.max(8, Math.min(32, (int) (r * 3f)));
+        Tessellator tess = Tessellator.getInstance();
+        WorldRenderer wr = tess.getWorldRenderer();
+        wr.begin(GL11.GL_LINE_LOOP, DefaultVertexFormats.POSITION);
+        appendArc(wr, x1 + r, y1 + r, r, 180, 270, segs); // TL
+        appendArc(wr, x2 - r, y1 + r, r, 270, 360, segs); // TR
+        appendArc(wr, x2 - r, y2 - r, r, 0, 90, segs);     // BR
+        appendArc(wr, x1 + r, y2 - r, r, 90, 180, segs);   // BL
+        tess.draw();
+
+        GL11.glDisable(GL11.GL_LINE_SMOOTH);
+        endSolid();
+    }
+
+    private static void drawCornerFan(float cx, float cy, float r,
+                                      int startDeg, int endDeg, int segs, int color) {
+        beginSolid(color);
+        GlStateManager.disableCull();
+        GlStateManager.disableDepth();
+
+        Tessellator tess = Tessellator.getInstance();
+        WorldRenderer wr = tess.getWorldRenderer();
+        wr.begin(GL11.GL_TRIANGLE_FAN, DefaultVertexFormats.POSITION);
+        wr.pos(cx, cy, 0).endVertex();
+        for (int i = 0; i <= segs; i++) {
+            double a = Math.toRadians(startDeg + (endDeg - startDeg) * (i / (double) segs));
+            wr.pos(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 0).endVertex();
+        }
+        tess.draw();
+
+        endSolid();
+    }
+
+    private static void appendArc(WorldRenderer wr, float cx, float cy, float r,
+                                  int startDeg, int endDeg, int segs) {
+        for (int i = 0; i <= segs; i++) {
+            double a = Math.toRadians(startDeg + (endDeg - startDeg) * (i / (double) segs));
+            wr.pos(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 0).endVertex();
+        }
+    }
+
+    private static void beginSolid(int color) {
+        float alpha = ((color >> 24) & 0xFF) / 255.0f;
+        float red   = ((color >> 16) & 0xFF) / 255.0f;
+        float green = ((color >>  8) & 0xFF) / 255.0f;
+        float blue  = ( color        & 0xFF) / 255.0f;
+        GlStateManager.enableBlend();
+        GlStateManager.disableTexture2D();
+        GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0);
+        GlStateManager.color(red, green, blue, alpha);
+    }
+
+    private static void endSolid() {
+        GlStateManager.enableDepth();
+        GlStateManager.enableCull();
+        GlStateManager.enableTexture2D();
+        GlStateManager.disableBlend();
+        GlStateManager.color(1f, 1f, 1f, 1f);
+    }
+
     public static int nerdifyLineHeight() {
         return getFontHeight() + OverlayTheme.lineExtra();
     }
