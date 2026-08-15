@@ -70,6 +70,24 @@ public class LazifyConfig {
     private boolean noHurtCam              = false;
     private boolean antiDebuff             = false;
 
+    // PartyDetector (pregame group-join alerts)
+    private boolean partyDetector          = true;
+    private boolean partyDetectorPing      = false;
+    private boolean partyDetectorShowMissed = true;
+    private boolean partyDetectorBw2s      = false;
+    private boolean partyDetectorBw3s      = true;
+    private boolean partyDetectorBw4s      = true;
+    private boolean partyDetectorBw4v4     = false;
+
+    /** Print teammate kills/finals/beds in chat when a Bedwars game ends. */
+    private boolean gameResultChat         = true;
+
+    /** Overlay/chat filter: keep players who meet min FKDR OR min stars. */
+    private boolean statFilter             = false;
+    private double  statFilterMinFkdr      = 0.0;
+    private int     statFilterMinStars     = 0;
+    private boolean statFilterChat         = false;
+
     // column visibility
     private boolean colEncounters = true;
     private boolean colUsername   = true;
@@ -84,7 +102,26 @@ public class LazifyConfig {
     private boolean colWlr        = false;
     private boolean colBblr       = false;
     private boolean colKdr        = false;
-    private String  colOrder      = "encounters,username,rank,star,fkdr,wlr,bblr,kdr,winstreaks,urchin,session,ping,level";
+    private boolean colKills      = false;
+    private boolean colFinals     = false;
+    private boolean colBeds       = false;
+    private boolean colWins       = false;
+    private boolean colDailyFkdr   = false;
+    private boolean colDailyWlr    = false;
+    private boolean colDailyStars  = false;
+    private boolean colDailyBblr   = false;
+    private boolean colDailyKdr    = false;
+    private boolean colWeeklyFkdr  = false;
+    private boolean colWeeklyWlr   = false;
+    private boolean colWeeklyStars = false;
+    private boolean colWeeklyBblr  = false;
+    private boolean colWeeklyKdr   = false;
+    private boolean colMonthlyFkdr = false;
+    private boolean colMonthlyWlr  = false;
+    private boolean colMonthlyStars = false;
+    private boolean colMonthlyBblr = false;
+    private boolean colMonthlyKdr  = false;
+    private String  colOrder      = "encounters,username,rank,star,fkdr,wlr,bblr,kdr,kills,finals,beds,wins,dailyfkdr,dailywlr,dailystars,dailybblr,dailykdr,weeklyfkdr,weeklywlr,weeklystars,weeklybblr,weeklykdr,monthlyfkdr,monthlywlr,monthlystars,monthlybblr,monthlykdr,winstreaks,urchin,session,ping,level";
 
     // int settings
     private int encountersTimeoutMins = 30;
@@ -162,15 +199,23 @@ public class LazifyConfig {
     private ThresholdColorScale pingScale = ThresholdColorScale.defaultPing();
     private ThresholdColorScale sessionScale = ThresholdColorScale.defaultSessionMinutes();
     private ThresholdColorScale encountersScale = ThresholdColorScale.defaultEncounters();
+    private ThresholdColorScale countsScale = ThresholdColorScale.defaultCounts();
+    private ThresholdColorScale periodStarsScale = ThresholdColorScale.defaultPeriodStars();
     private boolean wsColors = true;
     private boolean pingColors = true;
     private boolean sessionColors = true;
     private boolean encountersColors = true;
+    private boolean countColors = true;
+    private boolean periodStarsColors = true;
 
     /** Overlay column keys that have a header tag color. */
     public static final String[] HEADER_COL_KEYS = {
         "player", "rank", "seen", "star", "fkdr", "wlr", "bblr", "kdr",
-        "winstreaks", "session", "urchin", "netlevel", "ping"
+        "kills", "finals", "beds", "wins",
+        "winstreaks", "session", "urchin", "netlevel", "ping",
+        "dailyfkdr", "dailywlr", "dailystars", "dailybblr", "dailykdr",
+        "weeklyfkdr", "weeklywlr", "weeklystars", "weeklybblr", "weeklykdr",
+        "monthlyfkdr", "monthlywlr", "monthlystars", "monthlybblr", "monthlykdr"
     };
 
     private LazifyConfig() {}
@@ -254,7 +299,7 @@ public class LazifyConfig {
         seraphKey = p.getString();
 
         p = config.get("api", "bordicKey", "");
-        p.comment = "Your Bordic API key from bordic.xyz. Enables MVP++ superstar nick denicking.";
+        p.comment = "Your Bordic API key from bordic.xyz. Enables session period columns and MVP++ superstar nick denicking.";
         bordicKey = p.getString();
 
         p = config.get("api", "hypixelKey", "");
@@ -414,6 +459,45 @@ public class LazifyConfig {
         p.comment = "Remove visual debuff effects: blindness, nausea, and slowness FOV change.";
         antiDebuff = p.getBoolean(false);
 
+        p = config.get("general", "partyDetector", true);
+        p.comment = "Detect parties joining the pregame lobby by clustered join messages.";
+        partyDetector = p.getBoolean(true);
+        p = config.get("general", "partyDetectorPing", false);
+        p.comment = "Play a sound when PartyDetector alerts.";
+        partyDetectorPing = p.getBoolean(false);
+        p = config.get("general", "partyDetectorShowMissed", true);
+        p.comment = "Show how many players were already in the lobby before you.";
+        partyDetectorShowMissed = p.getBoolean(true);
+        p = config.get("general", "partyDetectorBw2s", false);
+        p.comment = "Alert for parties of 2 in Bedwars doubles.";
+        partyDetectorBw2s = p.getBoolean(false);
+        p = config.get("general", "partyDetectorBw3s", true);
+        p.comment = "Alert for parties of 3 in Bedwars threes.";
+        partyDetectorBw3s = p.getBoolean(true);
+        p = config.get("general", "partyDetectorBw4s", true);
+        p.comment = "Alert for parties of 4 in Bedwars fours.";
+        partyDetectorBw4s = p.getBoolean(true);
+        p = config.get("general", "partyDetectorBw4v4", false);
+        p.comment = "Alert for parties of 4 in Bedwars 4v4.";
+        partyDetectorBw4v4 = p.getBoolean(false);
+
+        p = config.get("general", "gameResultChat", true);
+        p.comment = "After a Bedwars game ends, print your teammates' kills, final kills, and beds broken.";
+        gameResultChat = p.getBoolean(true);
+
+        p = config.get("general", "statFilter", false);
+        p.comment = "Only show players who meet min FKDR or min stars (OR).";
+        statFilter = p.getBoolean(false);
+        p = config.get("general", "statFilterMinFkdr", 0.0);
+        p.comment = "Min FKDR to keep a player when Stat Filter is on (0 = ignore FKDR).";
+        statFilterMinFkdr = Math.max(0.0, p.getDouble(0.0));
+        p = config.get("general", "statFilterMinStars", 0);
+        p.comment = "Min stars to keep a player when Stat Filter is on (0 = ignore stars).";
+        statFilterMinStars = Math.max(0, p.getInt(0));
+        p = config.get("general", "statFilterChat", false);
+        p.comment = "Also print a chat line when a player matches the Stat Filter.";
+        statFilterChat = p.getBoolean(false);
+
         p = config.get("general", "debug", false);
         p.comment = "Show debug messages in chat for API calls, player detection, and status changes.";
         debug = p.getBoolean(false);
@@ -467,6 +551,82 @@ public class LazifyConfig {
         p = config.get("columns", "colKdr", false);
         p.comment = "Show overall KDR (Kills/Deaths).";
         colKdr = p.getBoolean(false);
+
+        p = config.get("columns", "colKills", false);
+        p.comment = "Show overall Bedwars kills.";
+        colKills = p.getBoolean(false);
+
+        p = config.get("columns", "colFinals", false);
+        p.comment = "Show overall Bedwars final kills.";
+        colFinals = p.getBoolean(false);
+
+        p = config.get("columns", "colBeds", false);
+        p.comment = "Show overall beds broken.";
+        colBeds = p.getBoolean(false);
+
+        p = config.get("columns", "colWins", false);
+        p.comment = "Show overall Bedwars wins.";
+        colWins = p.getBoolean(false);
+
+        p = config.get("columns", "colDailyFkdr", false);
+        p.comment = "Show daily FKDR from Bordic sessions.";
+        colDailyFkdr = p.getBoolean(false);
+
+        p = config.get("columns", "colDailyWlr", false);
+        p.comment = "Show daily WLR from Bordic sessions.";
+        colDailyWlr = p.getBoolean(false);
+
+        p = config.get("columns", "colDailyStars", false);
+        p.comment = "Show daily Stars from Bordic sessions.";
+        colDailyStars = p.getBoolean(false);
+
+        p = config.get("columns", "colDailyBblr", false);
+        p.comment = "Show daily BBLR from Bordic sessions.";
+        colDailyBblr = p.getBoolean(false);
+
+        p = config.get("columns", "colDailyKdr", false);
+        p.comment = "Show daily KDR from Bordic sessions.";
+        colDailyKdr = p.getBoolean(false);
+
+        p = config.get("columns", "colWeeklyFkdr", false);
+        p.comment = "Show weekly FKDR from Bordic sessions.";
+        colWeeklyFkdr = p.getBoolean(false);
+
+        p = config.get("columns", "colWeeklyWlr", false);
+        p.comment = "Show weekly WLR from Bordic sessions.";
+        colWeeklyWlr = p.getBoolean(false);
+
+        p = config.get("columns", "colWeeklyStars", false);
+        p.comment = "Show weekly Stars from Bordic sessions.";
+        colWeeklyStars = p.getBoolean(false);
+
+        p = config.get("columns", "colWeeklyBblr", false);
+        p.comment = "Show weekly BBLR from Bordic sessions.";
+        colWeeklyBblr = p.getBoolean(false);
+
+        p = config.get("columns", "colWeeklyKdr", false);
+        p.comment = "Show weekly KDR from Bordic sessions.";
+        colWeeklyKdr = p.getBoolean(false);
+
+        p = config.get("columns", "colMonthlyFkdr", false);
+        p.comment = "Show monthly FKDR from Bordic sessions.";
+        colMonthlyFkdr = p.getBoolean(false);
+
+        p = config.get("columns", "colMonthlyWlr", false);
+        p.comment = "Show monthly WLR from Bordic sessions.";
+        colMonthlyWlr = p.getBoolean(false);
+
+        p = config.get("columns", "colMonthlyStars", false);
+        p.comment = "Show monthly Stars from Bordic sessions.";
+        colMonthlyStars = p.getBoolean(false);
+
+        p = config.get("columns", "colMonthlyBblr", false);
+        p.comment = "Show monthly BBLR from Bordic sessions.";
+        colMonthlyBblr = p.getBoolean(false);
+
+        p = config.get("columns", "colMonthlyKdr", false);
+        p.comment = "Show monthly KDR from Bordic sessions.";
+        colMonthlyKdr = p.getBoolean(false);
 
         p = config.get("columns", "colWinstreaks", true);
         p.comment = "Show the Winstreak column.";
@@ -680,6 +840,9 @@ public class LazifyConfig {
         p = config.get("colors", "headerAllB", headerAllB);
         p.comment = "Bulk header blue — used by All Headers in click GUI.";
         headerAllB = clamp(p.getInt(headerAllB), 0, 255);
+        // New columns added after a config was saved may be missing from headerColors;
+        // seed them from All so they stay in sync with bulk edits.
+        ensureAllHeaderKeysPresent();
 
         p = config.get("colors", "mellowOuterR", 0);
         p.comment = "Mellow outer panel red.";
@@ -780,6 +943,14 @@ public class LazifyConfig {
         p.comment = "Encounters color tiers: min:r,g,b;...";
         encountersScale = ThresholdColorScale.parse(p.getString(), ThresholdColorScale.defaultEncounters());
 
+        p = config.get("colors", "countsScale", ThresholdColorScale.defaultCounts().serialize());
+        p.comment = "Kills/Finals/Beds/Wins color tiers: min:r,g,b;...";
+        countsScale = ThresholdColorScale.parse(p.getString(), ThresholdColorScale.defaultCounts());
+
+        p = config.get("colors", "periodStarsScale", ThresholdColorScale.defaultPeriodStars().serialize());
+        p.comment = "Daily/weekly/monthly stars-gained color tiers: min:r,g,b;...";
+        periodStarsScale = ThresholdColorScale.parse(p.getString(), ThresholdColorScale.defaultPeriodStars());
+
         p = config.get("general", "wsColors", true);
         p.comment = "Color-code winstreak values.";
         wsColors = p.getBoolean(true);
@@ -792,6 +963,12 @@ public class LazifyConfig {
         p = config.get("general", "encountersColors", true);
         p.comment = "Color-code encounter counts.";
         encountersColors = p.getBoolean(true);
+        p = config.get("general", "countColors", true);
+        p.comment = "Color-code kills/finals/beds/wins.";
+        countColors = p.getBoolean(true);
+        p = config.get("general", "periodStarsColors", true);
+        p.comment = "Color-code daily/weekly/monthly stars gained.";
+        periodStarsColors = p.getBoolean(true);
 
         // ── Clean up stale properties from old versions ───────────────────────
         cleanStaleProperties();
@@ -805,24 +982,10 @@ public class LazifyConfig {
                 config.getCategory("api").remove(key);
         }
 
-        String[] staleColumns = {
-            "colKillMsg",
-            "colMonthlyFkdr", "colMonthlyWlr", "colMonthlyStars", "colMonthlyBblr", "colMonthlyKdr"
-        };
+        String[] staleColumns = {"colKillMsg"};
         for (String key : staleColumns) {
             if (config.getCategory("columns").containsKey(key))
                 config.getCategory("columns").remove(key);
-        }
-        // Drop removed monthly column names from saved order
-        if (colOrder != null && colOrder.contains("monthly")) {
-            StringBuilder cleaned = new StringBuilder();
-            for (String part : colOrder.split(",")) {
-                String name = part.trim();
-                if (name.isEmpty() || name.startsWith("monthly")) continue;
-                if (cleaned.length() > 0) cleaned.append(',');
-                cleaned.append(name);
-            }
-            colOrder = cleaned.toString();
         }
 
         String[] staleGeneral = {
@@ -886,6 +1049,18 @@ public class LazifyConfig {
         gen.get("threatNickWeight").set(threatNickWeight);
         gen.get("noHurtCam").set(noHurtCam);
         gen.get("antiDebuff").set(antiDebuff);
+        gen.get("partyDetector").set(partyDetector);
+        gen.get("partyDetectorPing").set(partyDetectorPing);
+        gen.get("partyDetectorShowMissed").set(partyDetectorShowMissed);
+        gen.get("partyDetectorBw2s").set(partyDetectorBw2s);
+        gen.get("partyDetectorBw3s").set(partyDetectorBw3s);
+        gen.get("partyDetectorBw4s").set(partyDetectorBw4s);
+        gen.get("partyDetectorBw4v4").set(partyDetectorBw4v4);
+        gen.get("gameResultChat").set(gameResultChat);
+        gen.get("statFilter").set(statFilter);
+        gen.get("statFilterMinFkdr").set(statFilterMinFkdr);
+        gen.get("statFilterMinStars").set(statFilterMinStars);
+        gen.get("statFilterChat").set(statFilterChat);
         gen.get("encountersTimeoutMins").set(encountersTimeoutMins);
         gen.get("sortByIndex").set(sortByIndex);
         gen.get("sortMode").set(sortMode);
@@ -898,6 +1073,25 @@ public class LazifyConfig {
         col.get("colWlr").set(colWlr);
         col.get("colBblr").set(colBblr);
         col.get("colKdr").set(colKdr);
+        col.get("colKills").set(colKills);
+        col.get("colFinals").set(colFinals);
+        col.get("colBeds").set(colBeds);
+        col.get("colWins").set(colWins);
+        col.get("colDailyFkdr").set(colDailyFkdr);
+        col.get("colDailyWlr").set(colDailyWlr);
+        col.get("colDailyStars").set(colDailyStars);
+        col.get("colDailyBblr").set(colDailyBblr);
+        col.get("colDailyKdr").set(colDailyKdr);
+        col.get("colWeeklyFkdr").set(colWeeklyFkdr);
+        col.get("colWeeklyWlr").set(colWeeklyWlr);
+        col.get("colWeeklyStars").set(colWeeklyStars);
+        col.get("colWeeklyBblr").set(colWeeklyBblr);
+        col.get("colWeeklyKdr").set(colWeeklyKdr);
+        col.get("colMonthlyFkdr").set(colMonthlyFkdr);
+        col.get("colMonthlyWlr").set(colMonthlyWlr);
+        col.get("colMonthlyStars").set(colMonthlyStars);
+        col.get("colMonthlyBblr").set(colMonthlyBblr);
+        col.get("colMonthlyKdr").set(colMonthlyKdr);
         col.get("colWinstreaks").set(colWinstreaks);
         col.get("colUrchin").set(colUrchin);
         col.get("colSession").set(colSession);
@@ -987,10 +1181,14 @@ public class LazifyConfig {
         clr.get("pingScale").set(pingScale.serialize());
         clr.get("sessionScale").set(sessionScale.serialize());
         clr.get("encountersScale").set(encountersScale.serialize());
+        clr.get("countsScale").set(countsScale.serialize());
+        clr.get("periodStarsScale").set(periodStarsScale.serialize());
         gen.get("wsColors").set(wsColors);
         gen.get("pingColors").set(pingColors);
         gen.get("sessionColors").set(sessionColors);
         gen.get("encountersColors").set(encountersColors);
+        gen.get("countColors").set(countColors);
+        gen.get("periodStarsColors").set(periodStarsColors);
         config.save();
     }
 
@@ -1038,6 +1236,18 @@ public class LazifyConfig {
     public double  getThreatNickWeight()       { return threatNickWeight; }
     public boolean isNoHurtCam()               { return noHurtCam; }
     public boolean isAntiDebuff()              { return antiDebuff; }
+    public boolean isPartyDetector()           { return partyDetector; }
+    public boolean isPartyDetectorPing()       { return partyDetectorPing; }
+    public boolean isPartyDetectorShowMissed() { return partyDetectorShowMissed; }
+    public boolean isPartyDetectorBw2s()       { return partyDetectorBw2s; }
+    public boolean isPartyDetectorBw3s()       { return partyDetectorBw3s; }
+    public boolean isPartyDetectorBw4s()       { return partyDetectorBw4s; }
+    public boolean isPartyDetectorBw4v4()      { return partyDetectorBw4v4; }
+    public boolean isGameResultChat()          { return gameResultChat; }
+    public boolean isStatFilter()              { return statFilter; }
+    public double  getStatFilterMinFkdr()      { return statFilterMinFkdr; }
+    public int     getStatFilterMinStars()     { return statFilterMinStars; }
+    public boolean isStatFilterChat()          { return statFilterChat; }
     public boolean isColEncounters()           { return colEncounters; }
     public boolean isColUsername()             { return colUsername; }
     public boolean isColRank()                 { return colRank; }
@@ -1046,6 +1256,25 @@ public class LazifyConfig {
     public boolean isColWlr()                  { return colWlr; }
     public boolean isColBblr()                 { return colBblr; }
     public boolean isColKdr()                  { return colKdr; }
+    public boolean isColKills()                { return colKills; }
+    public boolean isColFinals()               { return colFinals; }
+    public boolean isColBeds()                 { return colBeds; }
+    public boolean isColWins()                 { return colWins; }
+    public boolean isColDailyFkdr()            { return colDailyFkdr; }
+    public boolean isColDailyWlr()             { return colDailyWlr; }
+    public boolean isColDailyStars()           { return colDailyStars; }
+    public boolean isColDailyBblr()            { return colDailyBblr; }
+    public boolean isColDailyKdr()             { return colDailyKdr; }
+    public boolean isColWeeklyFkdr()           { return colWeeklyFkdr; }
+    public boolean isColWeeklyWlr()            { return colWeeklyWlr; }
+    public boolean isColWeeklyStars()          { return colWeeklyStars; }
+    public boolean isColWeeklyBblr()           { return colWeeklyBblr; }
+    public boolean isColWeeklyKdr()            { return colWeeklyKdr; }
+    public boolean isColMonthlyFkdr()          { return colMonthlyFkdr; }
+    public boolean isColMonthlyWlr()           { return colMonthlyWlr; }
+    public boolean isColMonthlyStars()         { return colMonthlyStars; }
+    public boolean isColMonthlyBblr()          { return colMonthlyBblr; }
+    public boolean isColMonthlyKdr()           { return colMonthlyKdr; }
     public boolean isColWinstreaks()           { return colWinstreaks; }
     public boolean isColUrchin()               { return colUrchin; }
     public boolean isColSession()              { return colSession; }
@@ -1199,6 +1428,25 @@ public class LazifyConfig {
             case "wlr":        return "WLR";
             case "bblr":       return "BBLR";
             case "kdr":        return "KDR";
+            case "kills":      return "Kills";
+            case "finals":     return "Finals";
+            case "beds":       return "Beds";
+            case "wins":       return "Wins";
+            case "dailyfkdr":   return "dfkdr";
+            case "dailywlr":    return "dwlr";
+            case "dailystars":  return "dstar";
+            case "dailybblr":   return "dbblr";
+            case "dailykdr":    return "dkdr";
+            case "weeklyfkdr":  return "wfkdr";
+            case "weeklywlr":   return "wwlr";
+            case "weeklystars": return "wstar";
+            case "weeklybblr":  return "wbblr";
+            case "weeklykdr":   return "wkdr";
+            case "monthlyfkdr": return "mfkdr";
+            case "monthlywlr":  return "mwlr";
+            case "monthlystars": return "mstar";
+            case "monthlybblr": return "mbblr";
+            case "monthlykdr":  return "mkdr";
             case "winstreaks": return "WS";
             case "session":    return "Session";
             case "urchin":     return "Tags";
@@ -1219,6 +1467,25 @@ public class LazifyConfig {
             case "wlr":        return colWlr;
             case "bblr":       return colBblr;
             case "kdr":        return colKdr;
+            case "kills":      return colKills;
+            case "finals":     return colFinals;
+            case "beds":       return colBeds;
+            case "wins":       return colWins;
+            case "dailyfkdr":   return colDailyFkdr;
+            case "dailywlr":    return colDailyWlr;
+            case "dailystars":  return colDailyStars;
+            case "dailybblr":   return colDailyBblr;
+            case "dailykdr":    return colDailyKdr;
+            case "weeklyfkdr":  return colWeeklyFkdr;
+            case "weeklywlr":   return colWeeklyWlr;
+            case "weeklystars": return colWeeklyStars;
+            case "weeklybblr":  return colWeeklyBblr;
+            case "weeklykdr":   return colWeeklyKdr;
+            case "monthlyfkdr": return colMonthlyFkdr;
+            case "monthlywlr":  return colMonthlyWlr;
+            case "monthlystars": return colMonthlyStars;
+            case "monthlybblr": return colMonthlyBblr;
+            case "monthlykdr":  return colMonthlyKdr;
             case "winstreaks": return colWinstreaks;
             case "urchin":     return colUrchin;
             case "session":    return colSession;
@@ -1241,10 +1508,14 @@ public class LazifyConfig {
     public ThresholdColorScale getPingScale()       { return pingScale; }
     public ThresholdColorScale getSessionScale()    { return sessionScale; }
     public ThresholdColorScale getEncountersScale() { return encountersScale; }
+    public ThresholdColorScale getCountsScale()     { return countsScale; }
+    public ThresholdColorScale getPeriodStarsScale(){ return periodStarsScale; }
     public boolean isWsColors()                     { return wsColors; }
     public boolean isPingColors()                   { return pingColors; }
     public boolean isSessionColors()                { return sessionColors; }
     public boolean isEncountersColors()             { return encountersColors; }
+    public boolean isCountColors()                  { return countColors; }
+    public boolean isPeriodStarsColors()            { return periodStarsColors; }
 
     public void setFkdrScale(ThresholdColorScale v) {
         fkdrScale = v != null ? v : ThresholdColorScale.defaultFkdr();
@@ -1261,10 +1532,35 @@ public class LazifyConfig {
     public void setEncountersScale(ThresholdColorScale v) {
         encountersScale = v != null ? v : ThresholdColorScale.defaultEncounters();
     }
+    public void setCountsScale(ThresholdColorScale v) {
+        countsScale = v != null ? v : ThresholdColorScale.defaultCounts();
+    }
+    public void setPeriodStarsScale(ThresholdColorScale v) {
+        periodStarsScale = v != null ? v : ThresholdColorScale.defaultPeriodStars();
+    }
     public void setWsColors(boolean v)          { wsColors = v; }
     public void setPingColors(boolean v)        { pingColors = v; }
     public void setSessionColors(boolean v)     { sessionColors = v; }
     public void setEncountersColors(boolean v)  { encountersColors = v; }
+    public void setCountColors(boolean v)       { countColors = v; }
+    public void setPeriodStarsColors(boolean v) { periodStarsColors = v; }
+
+    /** Any lifetime count column enabled (kills/finals/beds/wins). */
+    public boolean anyCountColumnEnabled() {
+        return colKills || colFinals || colBeds || colWins;
+    }
+
+    /** Any daily/weekly/monthly ratio column (uses FKDR scale). */
+    public boolean anyPeriodRatioColumnEnabled() {
+        return colDailyFkdr || colDailyWlr || colDailyBblr || colDailyKdr
+                || colWeeklyFkdr || colWeeklyWlr || colWeeklyBblr || colWeeklyKdr
+                || colMonthlyFkdr || colMonthlyWlr || colMonthlyBblr || colMonthlyKdr;
+    }
+
+    /** Any daily/weekly/monthly stars-gained column. */
+    public boolean anyPeriodStarsColumnEnabled() {
+        return colDailyStars || colWeeklyStars || colMonthlyStars;
+    }
 
     // ── Setters ────────��────────────────────────────────────���──────────────────
     public void setUrchinKey(String v)             { urchinKey = v; }
@@ -1308,6 +1604,18 @@ public class LazifyConfig {
     public void setThreatNickWeight(double v)     { threatNickWeight = v; }
     public void setNoHurtCam(boolean v)           { noHurtCam = v; }
     public void setAntiDebuff(boolean v)          { antiDebuff = v; }
+    public void setPartyDetector(boolean v)       { partyDetector = v; }
+    public void setPartyDetectorPing(boolean v)   { partyDetectorPing = v; }
+    public void setPartyDetectorShowMissed(boolean v) { partyDetectorShowMissed = v; }
+    public void setPartyDetectorBw2s(boolean v)   { partyDetectorBw2s = v; }
+    public void setPartyDetectorBw3s(boolean v)   { partyDetectorBw3s = v; }
+    public void setPartyDetectorBw4s(boolean v)   { partyDetectorBw4s = v; }
+    public void setPartyDetectorBw4v4(boolean v)  { partyDetectorBw4v4 = v; }
+    public void setGameResultChat(boolean v)      { gameResultChat = v; }
+    public void setStatFilter(boolean v)          { statFilter = v; }
+    public void setStatFilterMinFkdr(double v)    { statFilterMinFkdr = Math.max(0.0, v); }
+    public void setStatFilterMinStars(int v)      { statFilterMinStars = Math.max(0, v); }
+    public void setStatFilterChat(boolean v)      { statFilterChat = v; }
     public void setColEncounters(boolean v)        { colEncounters = v; }
     public void setColUsername(boolean v)           { colUsername = v; }
     public void setColRank(boolean v)               { colRank = v; }
@@ -1316,6 +1624,25 @@ public class LazifyConfig {
     public void setColWlr(boolean v)               { colWlr = v; }
     public void setColBblr(boolean v)              { colBblr = v; }
     public void setColKdr(boolean v)               { colKdr = v; }
+    public void setColKills(boolean v)             { colKills = v; }
+    public void setColFinals(boolean v)            { colFinals = v; }
+    public void setColBeds(boolean v)              { colBeds = v; }
+    public void setColWins(boolean v)              { colWins = v; }
+    public void setColDailyFkdr(boolean v)          { colDailyFkdr = v; }
+    public void setColDailyWlr(boolean v)           { colDailyWlr = v; }
+    public void setColDailyStars(boolean v)         { colDailyStars = v; }
+    public void setColDailyBblr(boolean v)          { colDailyBblr = v; }
+    public void setColDailyKdr(boolean v)           { colDailyKdr = v; }
+    public void setColWeeklyFkdr(boolean v)         { colWeeklyFkdr = v; }
+    public void setColWeeklyWlr(boolean v)          { colWeeklyWlr = v; }
+    public void setColWeeklyStars(boolean v)        { colWeeklyStars = v; }
+    public void setColWeeklyBblr(boolean v)         { colWeeklyBblr = v; }
+    public void setColWeeklyKdr(boolean v)          { colWeeklyKdr = v; }
+    public void setColMonthlyFkdr(boolean v)        { colMonthlyFkdr = v; }
+    public void setColMonthlyWlr(boolean v)         { colMonthlyWlr = v; }
+    public void setColMonthlyStars(boolean v)       { colMonthlyStars = v; }
+    public void setColMonthlyBblr(boolean v)        { colMonthlyBblr = v; }
+    public void setColMonthlyKdr(boolean v)         { colMonthlyKdr = v; }
     public void setColWinstreaks(boolean v)        { colWinstreaks = v; }
     public void setColUrchin(boolean v)            { colUrchin = v; }
     public void setColSession(boolean v)           { colSession = v; }
@@ -1388,15 +1715,15 @@ public class LazifyConfig {
     public void setPingStyle(int v)                { pingStyle = clamp(v, 0, 1); }
     public void setHeaderAllR(int v) {
         headerAllR = clamp(v, 0, 255);
-        for (int[] rgb : headerColors.values()) rgb[0] = headerAllR;
+        applyHeaderAllChannel(0, headerAllR);
     }
     public void setHeaderAllG(int v) {
         headerAllG = clamp(v, 0, 255);
-        for (int[] rgb : headerColors.values()) rgb[1] = headerAllG;
+        applyHeaderAllChannel(1, headerAllG);
     }
     public void setHeaderAllB(int v) {
         headerAllB = clamp(v, 0, 255);
-        for (int[] rgb : headerColors.values()) rgb[2] = headerAllB;
+        applyHeaderAllChannel(2, headerAllB);
     }
     public void setHeaderR(String colKey, int v) { ensureHeader(colKey)[0] = clamp(v, 0, 255); }
     public void setHeaderG(String colKey, int v) { ensureHeader(colKey)[1] = clamp(v, 0, 255); }
@@ -1405,9 +1732,26 @@ public class LazifyConfig {
         headerAllR = clamp(r, 0, 255);
         headerAllG = clamp(g, 0, 255);
         headerAllB = clamp(b, 0, 255);
+        ensureAllHeaderKeysPresent();
         for (String key : HEADER_COL_KEYS) {
             int[] rgb = ensureHeader(key);
             rgb[0] = headerAllR; rgb[1] = headerAllG; rgb[2] = headerAllB;
+        }
+        for (int[] rgb : headerColors.values()) {
+            if (rgb == null || rgb.length < 3) continue;
+            rgb[0] = headerAllR; rgb[1] = headerAllG; rgb[2] = headerAllB;
+        }
+    }
+
+    /** Push one RGB channel onto every known header column (including newly added keys). */
+    private void applyHeaderAllChannel(int channel, int value) {
+        ensureAllHeaderKeysPresent();
+        for (String key : HEADER_COL_KEYS) {
+            ensureHeader(key)[channel] = value;
+        }
+        for (int[] rgb : headerColors.values()) {
+            if (rgb == null || rgb.length <= channel) continue;
+            rgb[channel] = value;
         }
     }
     public void setMellowOuterR(int v)  { mellowOuterR = clamp(v, 0, 255); }
@@ -1483,11 +1827,15 @@ public class LazifyConfig {
         pingScale = ThresholdColorScale.defaultPing();
         sessionScale = ThresholdColorScale.defaultSessionMinutes();
         encountersScale = ThresholdColorScale.defaultEncounters();
+        countsScale = ThresholdColorScale.defaultCounts();
+        periodStarsScale = ThresholdColorScale.defaultPeriodStars();
         fkdrColors = true;
         wsColors = true;
         pingColors = true;
         sessionColors = true;
         encountersColors = true;
+        countColors = true;
+        periodStarsColors = true;
     }
 
     /** Snapshot appearance settings for a preset file. */
@@ -1539,11 +1887,15 @@ public class LazifyConfig {
         put(p, "pingScale", pingScale.serialize());
         put(p, "sessionScale", sessionScale.serialize());
         put(p, "encountersScale", encountersScale.serialize());
+        put(p, "countsScale", countsScale.serialize());
+        put(p, "periodStarsScale", periodStarsScale.serialize());
         put(p, "fkdrColors", fkdrColors);
         put(p, "wsColors", wsColors);
         put(p, "pingColors", pingColors);
         put(p, "sessionColors", sessionColors);
         put(p, "encountersColors", encountersColors);
+        put(p, "countColors", countColors);
+        put(p, "periodStarsColors", periodStarsColors);
         return p;
     }
 
@@ -1596,10 +1948,14 @@ public class LazifyConfig {
         fkdrDecimals = clamp(getInt(p, "fkdrDecimals", fkdrDecimals), 0, 3);
         abbreviateNumbers = getBool(p, "abbreviateNumbers", abbreviateNumbers);
         pingStyle = clamp(getInt(p, "pingStyle", pingStyle), 0, 1);
-        if (p.containsKey("headerColors")) parseHeaderColors(p.getProperty("headerColors"));
+        if (p.containsKey("headerColors")) {
+            headerColors.clear();
+            parseHeaderColors(p.getProperty("headerColors"));
+        }
         headerAllR = clamp(getInt(p, "headerAllR", headerAllR), 0, 255);
         headerAllG = clamp(getInt(p, "headerAllG", headerAllG), 0, 255);
         headerAllB = clamp(getInt(p, "headerAllB", headerAllB), 0, 255);
+        ensureAllHeaderKeysPresent();
         mellowOuterR = clamp(getInt(p, "mellowOuterR", mellowOuterR), 0, 255);
         mellowOuterG = clamp(getInt(p, "mellowOuterG", mellowOuterG), 0, 255);
         mellowOuterB = clamp(getInt(p, "mellowOuterB", mellowOuterB), 0, 255);
@@ -1626,11 +1982,18 @@ public class LazifyConfig {
             sessionScale = ThresholdColorScale.parse(p.getProperty("sessionScale"), ThresholdColorScale.defaultSessionMinutes());
         if (p.containsKey("encountersScale"))
             encountersScale = ThresholdColorScale.parse(p.getProperty("encountersScale"), ThresholdColorScale.defaultEncounters());
+        // Migration: older presets lack these — keep defaults when absent
+        if (p.containsKey("countsScale"))
+            countsScale = ThresholdColorScale.parse(p.getProperty("countsScale"), ThresholdColorScale.defaultCounts());
+        if (p.containsKey("periodStarsScale"))
+            periodStarsScale = ThresholdColorScale.parse(p.getProperty("periodStarsScale"), ThresholdColorScale.defaultPeriodStars());
         fkdrColors = getBool(p, "fkdrColors", fkdrColors);
         wsColors = getBool(p, "wsColors", wsColors);
         pingColors = getBool(p, "pingColors", pingColors);
         sessionColors = getBool(p, "sessionColors", sessionColors);
         encountersColors = getBool(p, "encountersColors", encountersColors);
+        countColors = getBool(p, "countColors", countColors);
+        periodStarsColors = getBool(p, "periodStarsColors", periodStarsColors);
     }
 
     private static void put(Properties p, String key, Object val) {
@@ -1667,6 +2030,15 @@ public class LazifyConfig {
         headerColors.clear();
         for (String key : HEADER_COL_KEYS) {
             headerColors.put(key, new int[]{def[0], def[1], def[2]});
+        }
+    }
+
+    /** Make sure every HEADER_COL_KEYS entry exists (e.g. after upgrading the mod). */
+    private void ensureAllHeaderKeysPresent() {
+        for (String key : HEADER_COL_KEYS) {
+            if (!headerColors.containsKey(key)) {
+                headerColors.put(key, new int[]{headerAllR, headerAllG, headerAllB});
+            }
         }
     }
 

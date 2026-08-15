@@ -641,6 +641,32 @@ public class GuiClickMenu extends GuiScreen {
                 Entry dodge = new BoolEntry("Dodge Warning", "Warn if lobby is sweaty", c::isDodgeWarning, c::setDodgeWarning);
                 dodge.addChild(new DblEntry("Threshold", "Avg FKDR to trigger", c::getDodgeThreshold, c::setDodgeThreshold, 0.5, 20.0, 0.5));
                 entries.add(dodge);
+                Entry partyDet = new BoolEntry("PartyDetector", "Detect parties joining pregame (clustered joins)",
+                    c::isPartyDetector, c::setPartyDetector);
+                partyDet.addChild(new BoolEntry("Ping sound", "Play a sound on party alerts",
+                    c::isPartyDetectorPing, c::setPartyDetectorPing));
+                partyDet.addChild(new BoolEntry("Show missed players", "How many were already in lobby before you",
+                    c::isPartyDetectorShowMissed, c::setPartyDetectorShowMissed));
+                partyDet.addChild(new BoolEntry("Bedwars 2s", "Alert for parties of 2 in doubles",
+                    c::isPartyDetectorBw2s, c::setPartyDetectorBw2s));
+                partyDet.addChild(new BoolEntry("Bedwars 3s", "Alert for parties of 3 in threes",
+                    c::isPartyDetectorBw3s, c::setPartyDetectorBw3s));
+                partyDet.addChild(new BoolEntry("Bedwars 4s", "Alert for parties of 4 in fours",
+                    c::isPartyDetectorBw4s, c::setPartyDetectorBw4s));
+                partyDet.addChild(new BoolEntry("Bedwars 4v4", "Alert for parties of 4 in 4v4",
+                    c::isPartyDetectorBw4v4, c::setPartyDetectorBw4v4));
+                entries.add(partyDet);
+                entries.add(new BoolEntry("Game Result Chat", "Teammate kills/finals/beds in chat after game ends",
+                    c::isGameResultChat, c::setGameResultChat));
+                Entry statFilt = new BoolEntry("Stat Filter", "Only show players who meet min FKDR or min stars",
+                    c::isStatFilter, c::setStatFilter);
+                statFilt.addChild(new DblEntry("Min FKDR", "Keep if FKDR >= this (0 = ignore)",
+                    c::getStatFilterMinFkdr, c::setStatFilterMinFkdr, 0.0, 1000.0, 0.5));
+                statFilt.addChild(new IntEntry("Min Stars", "Keep if stars >= this (0 = ignore)",
+                    c::getStatFilterMinStars, c::setStatFilterMinStars, 0, 5000, 50, null));
+                statFilt.addChild(new BoolEntry("Chat Alert", "Also print matches in chat",
+                    c::isStatFilterChat, c::setStatFilterChat));
+                entries.add(statFilt);
                 entries.add(new BoolEntry("No Hurt Cam", "Disable damage camera tilt", c::isNoHurtCam, c::setNoHurtCam));
                 entries.add(new BoolEntry("Anti Debuff", "Remove visual debuffs", c::isAntiDebuff, c::setAntiDebuff));
                 entries.add(new BoolEntry("Team FKDR Chat", "Send team avg FKDRs to party", c::isTeamFkdrChat, c::setTeamFkdrChat));
@@ -788,10 +814,27 @@ public class GuiClickMenu extends GuiScreen {
                 // Stat threshold colors — only for enabled columns
                 Entry statColors = new GroupEntry("Stat Colors", "Threshold RGB for enabled columns");
                 boolean anyStatColor = false;
-                if (c.isColFkdr() || c.isColWlr() || c.isColBblr() || c.isColKdr()) {
-                    statColors.addChild(buildScaleModule("FKDR Colors", "FKDR / WLR / BBLR / KDR tiers (RGB)", "fkdr",
+                if (c.isColFkdr() || c.isColWlr() || c.isColBblr() || c.isColKdr()
+                        || c.anyPeriodRatioColumnEnabled()) {
+                    statColors.addChild(buildScaleModule("FKDR Colors",
+                            "FKDR / WLR / BBLR / KDR + m/w/d ratios (RGB)", "fkdr",
                             c::isFkdrColors, c::setFkdrColors, c::getFkdrScale, c::setFkdrScale,
                             0, 2000, 0.1, ""));
+                    anyStatColor = true;
+                }
+                if (c.anyCountColumnEnabled()) {
+                    statColors.addChild(buildScaleModule("Count Colors",
+                            "Kills / Finals / Beds / Wins tiers", "counts",
+                            c::isCountColors, c::setCountColors, c::getCountsScale, c::setCountsScale,
+                            0, 500000, 100, ""));
+                    anyStatColor = true;
+                }
+                if (c.anyPeriodStarsColumnEnabled()) {
+                    statColors.addChild(buildScaleModule("M/W/D Stars Colors",
+                            "Daily / weekly / monthly stars gained", "periodstars",
+                            c::isPeriodStarsColors, c::setPeriodStarsColors,
+                            c::getPeriodStarsScale, c::setPeriodStarsScale,
+                            0, 500, 1, ""));
                     anyStatColor = true;
                 }
                 if (c.isColWinstreaks()) {
@@ -845,19 +888,38 @@ public class GuiClickMenu extends GuiScreen {
             case 4: // Columns
                 String[] colOrd = c.getColOrder().split(",");
                 java.util.Map<String,ColEntry> colMap = new java.util.LinkedHashMap<>();
-                colMap.put("encounters", new ColEntry("Encounters", "encounters", c::isColEncounters, c::setColEncounters));
-                colMap.put("username",   new ColEntry("Username",   "username",   c::isColUsername,   c::setColUsername));
-                colMap.put("rank",       new ColEntry("Rank",       "rank",       c::isColRank,       c::setColRank));
-                colMap.put("star",       new ColEntry("Star",       "star",       c::isColStar,       c::setColStar));
+                colMap.put("encounters", new ColEntry("ENCOUNTERS", "encounters", c::isColEncounters, c::setColEncounters));
+                colMap.put("username",   new ColEntry("USERNAME",   "username",   c::isColUsername,   c::setColUsername));
+                colMap.put("rank",       new ColEntry("RANK",       "rank",       c::isColRank,       c::setColRank));
+                colMap.put("star",       new ColEntry("STAR",       "star",       c::isColStar,       c::setColStar));
                 colMap.put("fkdr",       new ColEntry("FKDR",       "fkdr",       c::isColFkdr,       c::setColFkdr));
                 colMap.put("wlr",        new ColEntry("WLR",        "wlr",        c::isColWlr,        c::setColWlr));
                 colMap.put("bblr",       new ColEntry("BBLR",       "bblr",       c::isColBblr,       c::setColBblr));
                 colMap.put("kdr",        new ColEntry("KDR",        "kdr",        c::isColKdr,        c::setColKdr));
-                colMap.put("winstreaks", new ColEntry("Winstreaks", "winstreaks", c::isColWinstreaks, c::setColWinstreaks));
-                colMap.put("urchin",     new ColEntry("Tags",       "urchin",     c::isColUrchin,     c::setColUrchin));
-                colMap.put("session",    new ColEntry("Session",    "session",    c::isColSession,    c::setColSession));
-                colMap.put("ping",       new ColEntry("Ping",       "ping",       c::isColPing,       c::setColPing));
-                colMap.put("level",      new ColEntry("Level",      "level",      c::isColLevel,      c::setColLevel));
+                colMap.put("kills",      new ColEntry("KILLS",      "kills",      c::isColKills,      c::setColKills));
+                colMap.put("finals",     new ColEntry("FINALS",     "finals",     c::isColFinals,     c::setColFinals));
+                colMap.put("beds",       new ColEntry("BEDS",       "beds",       c::isColBeds,       c::setColBeds));
+                colMap.put("wins",       new ColEntry("WINS",       "wins",       c::isColWins,       c::setColWins));
+                colMap.put("dailyfkdr",   new ColEntry("DFKDR",  "dailyfkdr",   c::isColDailyFkdr,   c::setColDailyFkdr));
+                colMap.put("dailywlr",    new ColEntry("DWLR",   "dailywlr",    c::isColDailyWlr,    c::setColDailyWlr));
+                colMap.put("dailystars",  new ColEntry("DSTAR",  "dailystars",  c::isColDailyStars,  c::setColDailyStars));
+                colMap.put("dailybblr",   new ColEntry("DBBLR",  "dailybblr",   c::isColDailyBblr,   c::setColDailyBblr));
+                colMap.put("dailykdr",    new ColEntry("DKDR",   "dailykdr",    c::isColDailyKdr,    c::setColDailyKdr));
+                colMap.put("weeklyfkdr",  new ColEntry("WFKDR",  "weeklyfkdr",  c::isColWeeklyFkdr,  c::setColWeeklyFkdr));
+                colMap.put("weeklywlr",   new ColEntry("WWLR",   "weeklywlr",   c::isColWeeklyWlr,   c::setColWeeklyWlr));
+                colMap.put("weeklystars", new ColEntry("WSTAR",  "weeklystars", c::isColWeeklyStars, c::setColWeeklyStars));
+                colMap.put("weeklybblr",  new ColEntry("WBBLR",  "weeklybblr",  c::isColWeeklyBblr,  c::setColWeeklyBblr));
+                colMap.put("weeklykdr",   new ColEntry("WKDR",   "weeklykdr",   c::isColWeeklyKdr,   c::setColWeeklyKdr));
+                colMap.put("monthlyfkdr", new ColEntry("MFKDR",  "monthlyfkdr", c::isColMonthlyFkdr, c::setColMonthlyFkdr));
+                colMap.put("monthlywlr",  new ColEntry("MWLR",   "monthlywlr",  c::isColMonthlyWlr,  c::setColMonthlyWlr));
+                colMap.put("monthlystars", new ColEntry("MSTAR", "monthlystars", c::isColMonthlyStars, c::setColMonthlyStars));
+                colMap.put("monthlybblr", new ColEntry("MBBLR",  "monthlybblr", c::isColMonthlyBblr, c::setColMonthlyBblr));
+                colMap.put("monthlykdr",  new ColEntry("MKDR",   "monthlykdr",  c::isColMonthlyKdr,  c::setColMonthlyKdr));
+                colMap.put("winstreaks", new ColEntry("WINSTREAKS", "winstreaks", c::isColWinstreaks, c::setColWinstreaks));
+                colMap.put("urchin",     new ColEntry("TAGS",       "urchin",     c::isColUrchin,     c::setColUrchin));
+                colMap.put("session",    new ColEntry("SESSION",    "session",    c::isColSession,    c::setColSession));
+                colMap.put("ping",       new ColEntry("PING",       "ping",       c::isColPing,       c::setColPing));
+                colMap.put("level",      new ColEntry("LEVEL",      "level",      c::isColLevel,      c::setColLevel));
                 for (String col : colOrd) { ColEntry ce = colMap.remove(col.trim()); if (ce != null) entries.add(ce); }
                 for (ColEntry ce : colMap.values()) entries.add(ce);
                 break;

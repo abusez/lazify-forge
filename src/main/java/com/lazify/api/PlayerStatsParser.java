@@ -35,6 +35,26 @@ public final class PlayerStatsParser {
         return new JsonWrapper(root);
     }
 
+    /**
+     * Build overlay stats JSON from a Bordic session {@code current.value} Bedwars blob
+     * (lifetime stats piggybacked on daily/weekly/monthly bulk responses).
+     */
+    public static JsonWrapper fromBedwarsStats(String name, JsonWrapper bedwarsRaw) {
+        if (bedwarsRaw == null || !bedwarsRaw.exists()) return null;
+        JsonObject root = new JsonObject();
+        root.addProperty("provider", "bordic-sessions");
+        root.addProperty("name", name == null || name.isEmpty() ? "Unknown" : name);
+        JsonObject network = new JsonObject();
+        network.addProperty("level", 0);
+        network.addProperty("exp", 0);
+        network.addProperty("rank", "");
+        network.addProperty("prefix", "");
+        network.addProperty("language", "ENGLISH");
+        root.add("network", network);
+        root.add("bedwars", buildBedwars(bedwarsRaw, new JsonWrapper(null)));
+        return new JsonWrapper(root);
+    }
+
     /** Fill gaps in {@code primary} from {@code secondary} (rank, stars, etc.). */
     public static JsonWrapper merge(JsonWrapper primary, JsonWrapper secondary) {
         if (primary == null || !primary.exists()) return secondary;

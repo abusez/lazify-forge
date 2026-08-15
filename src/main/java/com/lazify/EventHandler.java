@@ -86,6 +86,8 @@ public class EventHandler {
             if (mc.thePlayer.isPotionActive(15)) mc.thePlayer.removePotionEffect(15); // blindness
         }
 
+        OverlayManager.INSTANCE.onPartyDetectorClientTick();
+
         if (MellowTabOverlay.isActive() && mc.gameSettings != null
                 && mc.gameSettings.keyBindPlayerList.isKeyDown()) {
             int wheel = Mouse.getDWheel();
@@ -145,6 +147,11 @@ public class EventHandler {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.thePlayer != null && event.entity == mc.thePlayer) {
             OverlayManager.INSTANCE.onWorldChange();
+            return;
+        }
+        if (event.world != null && event.world.isRemote
+                && event.entity instanceof EntityPlayer) {
+            OverlayManager.INSTANCE.onPartyDetectorPlayerJoin((EntityPlayer) event.entity);
         }
     }
 

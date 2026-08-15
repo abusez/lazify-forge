@@ -1,6 +1,8 @@
 package com.lazify.overlay;
 
 import com.lazify.LazifyMod;
+import com.lazify.api.BordicSessions;
+import com.lazify.api.PlayerStatsParser;
 import com.lazify.api.StatsProvider;
 import com.lazify.api.HttpUtil;
 import com.lazify.api.JsonWrapper;
@@ -33,6 +35,7 @@ import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -50,6 +53,25 @@ public class OverlayManager {
     static final String WLR_KEY       = "wlr";
     static final String BBLR_KEY      = "bblr";
     static final String KDR_KEY       = "kdr";
+    static final String KILLS_KEY     = "kills";
+    static final String FINALS_KEY    = "finals";
+    static final String BEDS_KEY      = "beds";
+    static final String WINS_KEY      = "wins";
+    static final String DAILY_FKDR_KEY   = "dailyfkdr";
+    static final String DAILY_WLR_KEY    = "dailywlr";
+    static final String DAILY_STARS_KEY  = "dailystars";
+    static final String DAILY_BBLR_KEY   = "dailybblr";
+    static final String DAILY_KDR_KEY    = "dailykdr";
+    static final String WEEKLY_FKDR_KEY  = "weeklyfkdr";
+    static final String WEEKLY_WLR_KEY   = "weeklywlr";
+    static final String WEEKLY_STARS_KEY = "weeklystars";
+    static final String WEEKLY_BBLR_KEY  = "weeklybblr";
+    static final String WEEKLY_KDR_KEY   = "weeklykdr";
+    static final String MONTHLY_FKDR_KEY  = "monthlyfkdr";
+    static final String MONTHLY_WLR_KEY   = "monthlywlr";
+    static final String MONTHLY_STARS_KEY = "monthlystars";
+    static final String MONTHLY_BBLR_KEY  = "monthlybblr";
+    static final String MONTHLY_KDR_KEY   = "monthlykdr";
     static final String WINSTREAK_KEY = "winstreaks";
     static final String SESSION_KEY   = "session";
     static final String URCHIN_KEY    = "urchin";
@@ -69,6 +91,25 @@ public class OverlayManager {
     static final String WLR_VALUE        = "wlrvalue";
     static final String BBLR_VALUE       = "bblrvalue";
     static final String KDR_VALUE        = "kdrvalue";
+    static final String KILLS_VALUE      = "killsvalue";
+    static final String FINALS_VALUE     = "finalsvalue";
+    static final String BEDS_VALUE       = "bedsvalue";
+    static final String WINS_VALUE       = "winsvalue";
+    static final String DAILY_FKDR_VALUE   = "dailyfkdrvalue";
+    static final String DAILY_WLR_VALUE    = "dailywlrvalue";
+    static final String DAILY_BBLR_VALUE   = "dailybblrvalue";
+    static final String DAILY_KDR_VALUE    = "dailykdrvalue";
+    static final String DAILY_STARS_VALUE  = "dailystarsvalue";
+    static final String WEEKLY_FKDR_VALUE  = "weeklyfkdrvalue";
+    static final String WEEKLY_WLR_VALUE   = "weeklywlrvalue";
+    static final String WEEKLY_BBLR_VALUE  = "weeklybblrvalue";
+    static final String WEEKLY_KDR_VALUE   = "weeklykdrvalue";
+    static final String WEEKLY_STARS_VALUE = "weeklystarsvalue";
+    static final String MONTHLY_FKDR_VALUE  = "monthlyfkdrvalue";
+    static final String MONTHLY_WLR_VALUE   = "monthlywlrvalue";
+    static final String MONTHLY_BBLR_VALUE  = "monthlybblrvalue";
+    static final String MONTHLY_KDR_VALUE   = "monthlykdrvalue";
+    static final String MONTHLY_STARS_VALUE = "monthlystarsvalue";
     static final String INDEX_VALUE      = "indexvalue";
     static final String SESSION_VALUE    = "sessionvalue";
     static final String SESSION_DURATION = "sessionduration"; // minutes online
@@ -107,6 +148,12 @@ public class OverlayManager {
     Map<String, Map<String, Object>> statsCache      = new ConcurrentHashMap<>();
     Map<String, TagInfo>             tagCache        = new ConcurrentHashMap<>();
     Map<String, Integer>             pingCache       = new ConcurrentHashMap<>();
+    /** fetchUuid -> (period.path -> Snapshot) with short TTL via sessionCacheAt. */
+    private final Map<String, Map<String, BordicSessions.Snapshot>> sessionCache = new ConcurrentHashMap<>();
+    private final Map<String, Long> sessionCacheAt = new ConcurrentHashMap<>();
+    private final ConcurrentLinkedQueue<String[]> sessionFetchQueue = new ConcurrentLinkedQueue<>();
+    private volatile boolean sessionFlushRunning = false;
+    private static final long SESSION_CACHE_TTL_MS = 5 * 60 * 1000L;
 
     // ── Column / sort / tag metadata ──────────────────────────────────────────
     List<ColumnDef>       columns        = new ArrayList<>();
@@ -147,12 +194,39 @@ public class OverlayManager {
     boolean teamFkdrSent = false;
     boolean teamThreatSent = false;
 
+    // ── In-game combat tracking (for game-result chat) ────────────────────────
+    private boolean wasInBwGame = false;
+    private boolean gameResultSent = false;
+    private boolean selfEliminated = false;
+    private boolean ourTeamWiped = false;
+    /** Wall-clock ms when we entered status 3 (live Bedwars game). */
+    private long bwGameStartMs = 0L;
+    private static final long GAME_RESULT_MIN_MS = 30_000L;
+    private static final Pattern TEAM_ELIMINATED =
+            Pattern.compile("(?i)^TEAM ELIMINATED\\s*>\\s*(\\w+)\\s+Team\\s+has\\s+been\\s+eliminated!?$");
+    /** uuid -> [kills, finals, beds] for the current Bedwars game. */
+    private final Map<String, int[]> gameCombatStats = new ConcurrentHashMap<>();
+    private final Map<String, String> gameTeamByUuid = new ConcurrentHashMap<>();
+    private final Map<String, String> gameNameByUuid = new ConcurrentHashMap<>();
+    /** UUIDs already announced by Stat Filter chat this lobby. */
+    private final Set<String> statFilterChatSent = Collections.synchronizedSet(new HashSet<String>());
+
     // ── Party tracking ────────────────────────────────────────────────────────
     private final Set<String> partyMembers = Collections.synchronizedSet(new HashSet<String>());
     private boolean parsingPartyList = false;
     private boolean partySent = false;
     /** When true, hide Hypixel /pl response lines from chat (set by auto /pl + hidePl). */
     private volatile boolean suppressPartyChat = false;
+
+    // ── PartyDetector (pregame entity-join clustering) ────────────────────────
+    /** Join cluster window — same ballpark as common lobby party detectors. */
+    private static final long PARTY_DETECT_WINDOW_MS = 1000L;
+    private int partyDetectCounter = 0;
+    private long partyDetectLastJoinMs = 0L;
+    private boolean partyDetectCounting = false;
+    private boolean partyDetectMissedDone = false;
+    private int partyDetectMissedTicks = 0;
+    private boolean partyDetectGameStarting = false;
 
     // ── Overlay layout ─────────────────────────────────────────────────────────
     int   startX = 500, startY = 12, offsetY = 5;
@@ -227,6 +301,25 @@ public class OverlayManager {
         addColumn("WLR",        "[WLR]",     WLR_KEY);
         addColumn("BBLR",       "[BBLR]",    BBLR_KEY);
         addColumn("KDR",        "[KDR]",     KDR_KEY);
+        addColumn("Kills",      "[KILLS]",   KILLS_KEY);
+        addColumn("Finals",     "[FINALS]",  FINALS_KEY);
+        addColumn("Beds",       "[BEDS]",    BEDS_KEY);
+        addColumn("Wins",       "[WINS]",    WINS_KEY);
+        addColumn("dfkdr",  "[DFKDR]", DAILY_FKDR_KEY);
+        addColumn("dwlr",   "[DWLR]",  DAILY_WLR_KEY);
+        addColumn("dstar",  "[DSTAR]", DAILY_STARS_KEY);
+        addColumn("dbblr",  "[DBBLR]", DAILY_BBLR_KEY);
+        addColumn("dkdr",   "[DKDR]",  DAILY_KDR_KEY);
+        addColumn("wfkdr",  "[WFKDR]", WEEKLY_FKDR_KEY);
+        addColumn("wwlr",   "[WWLR]",  WEEKLY_WLR_KEY);
+        addColumn("wstar",  "[WSTAR]", WEEKLY_STARS_KEY);
+        addColumn("wbblr",  "[WBBLR]", WEEKLY_BBLR_KEY);
+        addColumn("wkdr",   "[WKDR]",  WEEKLY_KDR_KEY);
+        addColumn("mfkdr",  "[MFKDR]", MONTHLY_FKDR_KEY);
+        addColumn("mwlr",   "[MWLR]",  MONTHLY_WLR_KEY);
+        addColumn("mstar",  "[MSTAR]", MONTHLY_STARS_KEY);
+        addColumn("mbblr",  "[MBBLR]", MONTHLY_BBLR_KEY);
+        addColumn("mkdr",   "[MKDR]",  MONTHLY_KDR_KEY);
         addColumn("Winstreaks", "[WS]",      WINSTREAK_KEY);
         addColumn("Tags",       "[TAGS]",    URCHIN_KEY);
         addColumn("Session",    "[SESSION]", SESSION_KEY);
@@ -253,7 +346,7 @@ public class OverlayManager {
         else if (seraphKey().isEmpty())
             print(PREFIX + "\u00a7eNo Seraph API key set. Use \u00a73/ov key seraph <key>\u00a7e for Seraph tags.");
         if (bordicKey().isEmpty())
-            print(PREFIX + "\u00a7eNo Bordic API key set. Use \u00a73/ov key bordic <key>\u00a7e to enable superstar nick denicking.");
+            print(PREFIX + "\u00a7eNo Bordic API key set. Use \u00a73/ov key bordic <key>\u00a7e for session columns / superstar denick.");
         if (hypixelKey().isEmpty())
             print(PREFIX + "\u00a7eNo Hypixel API key set. Stats use Abyss/Prism only. \u00a73/ov key hypixel <key>\u00a7e for fallback.");
     }
@@ -305,6 +398,25 @@ public class OverlayManager {
                 case WLR_KEY:        col.setEnabled(cfg.isColWlr());        break;
                 case BBLR_KEY:       col.setEnabled(cfg.isColBblr());       break;
                 case KDR_KEY:        col.setEnabled(cfg.isColKdr());        break;
+                case KILLS_KEY:      col.setEnabled(cfg.isColKills());      break;
+                case FINALS_KEY:     col.setEnabled(cfg.isColFinals());     break;
+                case BEDS_KEY:       col.setEnabled(cfg.isColBeds());       break;
+                case WINS_KEY:       col.setEnabled(cfg.isColWins());       break;
+                case DAILY_FKDR_KEY:   col.setEnabled(cfg.isColDailyFkdr());   break;
+                case DAILY_WLR_KEY:    col.setEnabled(cfg.isColDailyWlr());    break;
+                case DAILY_STARS_KEY:  col.setEnabled(cfg.isColDailyStars());  break;
+                case DAILY_BBLR_KEY:   col.setEnabled(cfg.isColDailyBblr());   break;
+                case DAILY_KDR_KEY:    col.setEnabled(cfg.isColDailyKdr());    break;
+                case WEEKLY_FKDR_KEY:  col.setEnabled(cfg.isColWeeklyFkdr());  break;
+                case WEEKLY_WLR_KEY:   col.setEnabled(cfg.isColWeeklyWlr());   break;
+                case WEEKLY_STARS_KEY: col.setEnabled(cfg.isColWeeklyStars()); break;
+                case WEEKLY_BBLR_KEY:  col.setEnabled(cfg.isColWeeklyBblr());  break;
+                case WEEKLY_KDR_KEY:   col.setEnabled(cfg.isColWeeklyKdr());   break;
+                case MONTHLY_FKDR_KEY:  col.setEnabled(cfg.isColMonthlyFkdr());  break;
+                case MONTHLY_WLR_KEY:   col.setEnabled(cfg.isColMonthlyWlr());   break;
+                case MONTHLY_STARS_KEY: col.setEnabled(cfg.isColMonthlyStars()); break;
+                case MONTHLY_BBLR_KEY:  col.setEnabled(cfg.isColMonthlyBblr());  break;
+                case MONTHLY_KDR_KEY:   col.setEnabled(cfg.isColMonthlyKdr());   break;
                 case WINSTREAK_KEY:  col.setEnabled(cfg.isColWinstreaks()); break;
                 case URCHIN_KEY:     col.setEnabled(cfg.isColUrchin());     break;
                 case SESSION_KEY:    col.setEnabled(cfg.isColSession());    break;
@@ -338,6 +450,25 @@ public class OverlayManager {
             case WLR_KEY:        return "wlr";
             case BBLR_KEY:       return "bblr";
             case KDR_KEY:        return "kdr";
+            case KILLS_KEY:      return "kills";
+            case FINALS_KEY:     return "finals";
+            case BEDS_KEY:       return "beds";
+            case WINS_KEY:       return "wins";
+            case DAILY_FKDR_KEY:   return "dailyfkdr";
+            case DAILY_WLR_KEY:    return "dailywlr";
+            case DAILY_STARS_KEY:  return "dailystars";
+            case DAILY_BBLR_KEY:   return "dailybblr";
+            case DAILY_KDR_KEY:    return "dailykdr";
+            case WEEKLY_FKDR_KEY:  return "weeklyfkdr";
+            case WEEKLY_WLR_KEY:   return "weeklywlr";
+            case WEEKLY_STARS_KEY: return "weeklystars";
+            case WEEKLY_BBLR_KEY:  return "weeklybblr";
+            case WEEKLY_KDR_KEY:   return "weeklykdr";
+            case MONTHLY_FKDR_KEY:  return "monthlyfkdr";
+            case MONTHLY_WLR_KEY:   return "monthlywlr";
+            case MONTHLY_STARS_KEY: return "monthlystars";
+            case MONTHLY_BBLR_KEY:  return "monthlybblr";
+            case MONTHLY_KDR_KEY:   return "monthlykdr";
             case WINSTREAK_KEY:  return "winstreaks";
             case URCHIN_KEY:     return "urchin";
             case SESSION_KEY:    return "session";
@@ -376,7 +507,7 @@ public class OverlayManager {
         if (status >= 1 || inBwPregame) {
             refreshWinstreakDisplays();
         }
-
+        tickPartyDetector();
         // Debug scoreboard dump (throttled to every 100 ticks / 5 seconds)
         if (debugScoreboard && LazifyConfig.INSTANCE.isDebug()) {
             if (debugSbCooldown <= 0) {
@@ -460,6 +591,7 @@ public class OverlayManager {
                     if (formatted != null) {
                         if (showTeamColors) {
                             teams.put(uuid, formatted);
+                            rememberGameTeam(uuid, pla.getGameProfile().getName());
                         } else {
                             teams.remove(uuid);
                         }
@@ -666,11 +798,23 @@ public class OverlayManager {
                     debugFromThread("Auto /who triggered on game start (delay " + whoDelayMs + "ms)");
                 }).start();
             }
+
+            // Entering a live Bedwars game — start fresh combat tracking
+            if (status == 3 && oldStatus != 3) {
+                resetGameCombatTracking();
+                wasInBwGame = true;
+                bwGameStartMs = System.currentTimeMillis();
+            }
         }
         if (!lastLobby.equals(currentLobby)) {
             debug("Lobby changed: " + lastLobby + " -> " + currentLobby);
             currentBwMode = -1;
             lobbyMaxPlayers = -1;
+            resetPartyDetector();
+            resetGameCombatTracking();
+            wasInBwGame = false;
+            bwGameStartMs = 0L;
+            statFilterChatSent.clear();
             clearMaps();
         }
     }
@@ -892,6 +1036,37 @@ public class OverlayManager {
                 case KDR_KEY:
                     if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
                     return cfg.getFkdrScale().colorFor(statOrParse(ps, KDR_VALUE, KDR_KEY));
+                case DAILY_FKDR_KEY:
+                case WEEKLY_FKDR_KEY:
+                case MONTHLY_FKDR_KEY:
+                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    return cfg.getFkdrScale().colorFor(statOrParse(ps, periodValueKey(colKey), colKey));
+                case DAILY_WLR_KEY:
+                case WEEKLY_WLR_KEY:
+                case MONTHLY_WLR_KEY:
+                case DAILY_BBLR_KEY:
+                case WEEKLY_BBLR_KEY:
+                case MONTHLY_BBLR_KEY:
+                case DAILY_KDR_KEY:
+                case WEEKLY_KDR_KEY:
+                case MONTHLY_KDR_KEY:
+                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    return cfg.getFkdrScale().colorFor(statOrParse(ps, periodValueKey(colKey), colKey));
+                case DAILY_STARS_KEY:
+                case WEEKLY_STARS_KEY:
+                case MONTHLY_STARS_KEY:
+                    if (!cfg.isPeriodStarsColors()) return 0xFFFFFFFF;
+                    return cfg.getPeriodStarsScale().colorFor(statOrParse(ps, periodValueKey(colKey), colKey));
+                case KILLS_KEY:
+                case FINALS_KEY:
+                case BEDS_KEY:
+                case WINS_KEY: {
+                    if (!cfg.isCountColors()) return 0xFFFFFFFF;
+                    String valueKey = KILLS_KEY.equals(colKey) ? KILLS_VALUE
+                            : FINALS_KEY.equals(colKey) ? FINALS_VALUE
+                            : BEDS_KEY.equals(colKey) ? BEDS_VALUE : WINS_VALUE;
+                    return cfg.getCountsScale().colorFor(statOrParse(ps, valueKey, colKey));
+                }
                 case WINSTREAK_KEY:
                     if (!cfg.isWsColors()) return 0xFFFFFFFF;
                     double ws = getDoubleStat(ps, WINSTREAK_VALUE);
@@ -988,6 +1163,29 @@ public class OverlayManager {
             case KDR_KEY:
                 return resolveMellowTabStat(ps, formatDisplayStat(KDR_KEY, ps,
                         ps != null ? stringVal(ps.get(KDR_KEY)) : null), unresolvedNick, isError);
+            case KILLS_KEY:
+            case FINALS_KEY:
+            case BEDS_KEY:
+            case WINS_KEY:
+                return resolveMellowTabStat(ps, formatDisplayStat(colKey, ps,
+                        ps != null ? stringVal(ps.get(colKey)) : null), unresolvedNick, isError);
+            case DAILY_FKDR_KEY:
+            case DAILY_WLR_KEY:
+            case DAILY_BBLR_KEY:
+            case DAILY_KDR_KEY:
+            case DAILY_STARS_KEY:
+            case WEEKLY_FKDR_KEY:
+            case WEEKLY_WLR_KEY:
+            case WEEKLY_BBLR_KEY:
+            case WEEKLY_KDR_KEY:
+            case WEEKLY_STARS_KEY:
+            case MONTHLY_FKDR_KEY:
+            case MONTHLY_WLR_KEY:
+            case MONTHLY_BBLR_KEY:
+            case MONTHLY_KDR_KEY:
+            case MONTHLY_STARS_KEY:
+                return resolveMellowTabStat(ps, formatDisplayStat(colKey, ps,
+                        ps != null ? stringVal(ps.get(colKey)) : null), unresolvedNick, isError);
             case WINSTREAK_KEY:
                 return resolveMellowTabStat(ps, ps != null ? stringVal(ps.get(WINSTREAK_KEY)) : null, unresolvedNick, isError);
             case URCHIN_KEY:
@@ -1306,6 +1504,7 @@ public class OverlayManager {
         int inset = overlayInset();
         int currentX = startX + inset;
         boolean firstCol = true;
+        List<String> visible = visiblePlayerUuids();
 
         for (ColumnDef col : columns) {
             String key  = col.getKey();
@@ -1314,48 +1513,46 @@ public class OverlayManager {
             // Include bold in header measure so layout matches what we draw
             int longest = OverlayRenderer.getFontWidth(headerTextFor(col, nerdify));
 
-            synchronized (currentPlayers) {
-                for (String uuid : currentPlayers) {
-                    Map<String, Object> pd = overlayPlayers.get(uuid);
-                    if (pd == null) continue;
+            for (String uuid : visible) {
+                Map<String, Object> pd = overlayPlayers.get(uuid);
+                if (pd == null) continue;
 
-                    String value;
-                    if (key.equals(TAGS_KEY)) {
-                        StringBuilder sb = new StringBuilder();
-                        for (String tag : tags) {
-                            Object t = pd.get(tag);
-                            if (t != null) sb.append(t.toString());
-                        }
-                        value = sb.toString();
-                    } else {
-                        Object obj = pd.get(key);
-                        if (obj == null) continue;
-                        value = formatDisplayStat(key, pd, obj.toString());
+                String value;
+                if (key.equals(TAGS_KEY)) {
+                    StringBuilder sb = new StringBuilder();
+                    for (String tag : tags) {
+                        Object t = pd.get(tag);
+                        if (t != null) sb.append(t.toString());
                     }
+                    value = sb.toString();
+                } else {
+                    Object obj = pd.get(key);
+                    if (obj == null) continue;
+                    value = formatDisplayStat(key, pd, obj.toString());
+                }
 
-                    int w;
-                    if (nerdify) {
-                        if (PLAYER_KEY.equals(key)) {
-                            w = OverlayRenderer.getFontWidth(
-                                    OverlayTheme.measurePlayer(uuid, value, pd));
-                        } else {
-                            w = OverlayRenderer.getFontWidth(OverlayTheme.measureText(key, value));
-                        }
-                        int minW = OverlayTheme.minColWidth(key);
-                        if (minW > 0) w = Math.max(w, minW);
+                int w;
+                if (nerdify) {
+                    if (PLAYER_KEY.equals(key)) {
+                        w = OverlayRenderer.getFontWidth(
+                                OverlayTheme.measurePlayer(uuid, value, pd));
                     } else {
-                        w = OverlayRenderer.getFontWidth(value);
-                        if (key.equals(PLAYER_KEY)) {
-                            w = OverlayRenderer.getFontWidth(ColorUtil.strip(value));
-                        }
+                        w = OverlayRenderer.getFontWidth(OverlayTheme.measureText(key, value));
                     }
-                    if (w > longest) longest = w;
-                    if (key.equals(URCHIN_KEY)) {
-                        longest = Math.max(longest, OverlayRenderer.getFontWidth("BC+C"));
+                    int minW = OverlayTheme.minColWidth(key);
+                    if (minW > 0) w = Math.max(w, minW);
+                } else {
+                    w = OverlayRenderer.getFontWidth(value);
+                    if (key.equals(PLAYER_KEY)) {
+                        w = OverlayRenderer.getFontWidth(ColorUtil.strip(value));
                     }
-                    if (key.equals(RANK_KEY)) {
-                        longest = Math.max(longest, OverlayRenderer.getFontWidth("[MVP++]"));
-                    }
+                }
+                if (w > longest) longest = w;
+                if (key.equals(URCHIN_KEY)) {
+                    longest = Math.max(longest, OverlayRenderer.getFontWidth("BC+C"));
+                }
+                if (key.equals(RANK_KEY)) {
+                    longest = Math.max(longest, OverlayRenderer.getFontWidth("[MVP++]"));
                 }
             }
 
@@ -1373,7 +1570,7 @@ public class OverlayManager {
         int fontH = OverlayRenderer.getFontHeight();
         int headerGap = 5; // space between header text and first player row
         int lineHeight = nerdify ? OverlayRenderer.nerdifyLineHeight() : fontH + offsetY;
-        int rows = currentPlayers.size();
+        int rows = visible.size();
 
         // Equal inset on every side; content sits inside (headers + rows)
         endX = currentX + inset;
@@ -1419,10 +1616,52 @@ public class OverlayManager {
                 }
                 break;
             }
+            case DAILY_FKDR_KEY:
+            case DAILY_WLR_KEY:
+            case DAILY_BBLR_KEY:
+            case DAILY_KDR_KEY:
+            case WEEKLY_FKDR_KEY:
+            case WEEKLY_WLR_KEY:
+            case WEEKLY_BBLR_KEY:
+            case WEEKLY_KDR_KEY:
+            case MONTHLY_FKDR_KEY:
+            case MONTHLY_WLR_KEY:
+            case MONTHLY_BBLR_KEY:
+            case MONTHLY_KDR_KEY: {
+                String valueKey = periodValueKey(key);
+                if (ps.get(valueKey) instanceof Number) {
+                    return ColorUtil.formatRatio(((Number) ps.get(valueKey)).doubleValue(), cfg.getFkdrDecimals());
+                }
+                break;
+            }
+            case DAILY_STARS_KEY:
+            case WEEKLY_STARS_KEY:
+            case MONTHLY_STARS_KEY: {
+                String valueKey = periodValueKey(key);
+                if (ps.get(valueKey) instanceof Number) {
+                    int n = ((Number) ps.get(valueKey)).intValue();
+                    if (n > 0) return "+" + n;
+                    return String.valueOf(n);
+                }
+                break;
+            }
             case STAR_KEY: {
                 if (ps.get(STAR_VALUE) instanceof Number) {
                     int stars = ((Number) ps.get(STAR_VALUE)).intValue();
                     return ColorUtil.formatStarDisplay(stars, cfg.isAbbreviateNumbers());
+                }
+                break;
+            }
+            case KILLS_KEY:
+            case FINALS_KEY:
+            case BEDS_KEY:
+            case WINS_KEY: {
+                String valueKey = KILLS_KEY.equals(key) ? KILLS_VALUE
+                        : FINALS_KEY.equals(key) ? FINALS_VALUE
+                        : BEDS_KEY.equals(key) ? BEDS_VALUE : WINS_VALUE;
+                if (ps.get(valueKey) instanceof Number) {
+                    long n = ((Number) ps.get(valueKey)).longValue();
+                    return ColorUtil.formatCount(n, cfg.isAbbreviateNumbers());
                 }
                 break;
             }
@@ -1505,11 +1744,88 @@ public class OverlayManager {
             doColumns(false);
             sortOverlay();
             checkDodgeWarning();
+            checkStatFilterChat(uuid, existing);
             sendTeamFkdrToPartyChat();
             sendTeamThreatToPartyChat();
         } catch (Exception e) {
             print(PREFIX + "\u00a7eError detected. Please check \u00a73latest.log\u00a7e.");
         }
+    }
+
+    /**
+     * Stat Filter: keep players who meet min FKDR <b>or</b> min stars.
+     * Self, unresolved nicks, and players still loading stats always pass.
+     */
+    boolean passesStatFilter(String uuid, Map<String, Object> ps) {
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        if (!cfg.isStatFilter()) return true;
+        double minFkdr = cfg.getStatFilterMinFkdr();
+        int minStars = cfg.getStatFilterMinStars();
+        if (minFkdr <= 0 && minStars <= 0) return true;
+
+        if (isSelfUuid(uuid)) return true;
+        if (ps != null && Boolean.TRUE.equals(ps.get("nicked"))
+                && !Boolean.TRUE.equals(ps.get("denicked"))
+                && !nickRealUuid.containsKey(uuid)) {
+            return true;
+        }
+
+        Double fkdr = null;
+        Integer stars = null;
+        if (ps != null) {
+            Object fv = ps.get(FKDR_VALUE);
+            if (fv instanceof Number) fkdr = ((Number) fv).doubleValue();
+            Object sv = ps.get(STAR_VALUE);
+            if (sv instanceof Number) stars = ((Number) sv).intValue();
+        }
+        // Stats not loaded yet — keep visible until we can decide
+        if (fkdr == null && stars == null) return true;
+
+        boolean fkdrOk = minFkdr > 0 && fkdr != null && fkdr >= minFkdr;
+        boolean starOk = minStars > 0 && stars != null && stars >= minStars;
+        if (minFkdr > 0 && minStars > 0) return fkdrOk || starOk;
+        if (minFkdr > 0) return fkdrOk;
+        return starOk;
+    }
+
+    private List<String> visiblePlayerUuids() {
+        List<String> out = new ArrayList<>();
+        synchronized (currentPlayers) {
+            for (String uuid : currentPlayers) {
+                Map<String, Object> ps = overlayPlayers.get(uuid);
+                if (ps == null) continue;
+                if (passesStatFilter(uuid, ps)) out.add(uuid);
+            }
+        }
+        return out;
+    }
+
+    private void checkStatFilterChat(String uuid, Map<String, Object> ps) {
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        if (!cfg.isStatFilter() || !cfg.isStatFilterChat()) return;
+        if (uuid == null || ps == null) return;
+        if (isSelfUuid(uuid)) return;
+        if (!passesStatFilter(uuid, ps)) return;
+        // Only announce once we actually have a numeric match (not loading placeholders)
+        double minFkdr = cfg.getStatFilterMinFkdr();
+        int minStars = cfg.getStatFilterMinStars();
+        if (minFkdr <= 0 && minStars <= 0) return;
+        Object fv = ps.get(FKDR_VALUE);
+        Object sv = ps.get(STAR_VALUE);
+        boolean hasNums = fv instanceof Number || sv instanceof Number;
+        if (!hasNums) return;
+        if (!statFilterChatSent.add(uuid)) return;
+
+        String name = uuidToName.get(uuid);
+        if (name == null || name.isEmpty()) {
+            Object p = ps.get(PLAYER_KEY);
+            name = p != null ? ColorUtil.strip(p.toString()) : uuid;
+        }
+        String fkdrStr = fv instanceof Number
+                ? ColorUtil.formatRatio(((Number) fv).doubleValue(), cfg.getFkdrDecimals()) : "-";
+        String starStr = sv instanceof Number ? String.valueOf(((Number) sv).intValue()) : "-";
+        print(PREFIX + "\u00a7dStat Filter: \u00a7e" + name
+                + " \u00a77\u2013 \u00a7f" + fkdrStr + "\u00a77 FKDR  \u00a7f" + starStr + "\u00a77\u2606");
     }
 
     private void checkDodgeWarning() {
@@ -1541,6 +1857,355 @@ public class OverlayManager {
             String avgStr = ColorUtil.formatDoubleStr(ColorUtil.round(avg, 2));
             printFromThread(PREFIX + "\u00a7c\u26a0 Lobby dodge warning! \u00a7eAvg FKDR: \u00a7c" + avgStr
                 + " \u00a7e(threshold: \u00a73" + ColorUtil.formatDoubleStr(threshold) + "\u00a7e)");
+        }
+    }
+
+    // ==========================================================================
+    // PartyDetector — clustered pregame player entity joins
+    // ==========================================================================
+
+    private void resetPartyDetector() {
+        partyDetectCounter = 0;
+        partyDetectLastJoinMs = 0L;
+        partyDetectCounting = false;
+        partyDetectMissedDone = false;
+        partyDetectMissedTicks = 0;
+        partyDetectGameStarting = false;
+    }
+
+    /** Client tick (every frame tick) — missed-player snapshot shortly after entering pregame. */
+    public void onPartyDetectorClientTick() {
+        if (!LazifyConfig.INSTANCE.isPartyDetector()) return;
+        if (!LazifyConfig.INSTANCE.isPartyDetectorShowMissed()) return;
+        if (partyDetectMissedDone || partyDetectGameStarting) return;
+        if (!isPartyDetectorPregame()) return;
+
+        partyDetectMissedTicks++;
+        if (partyDetectMissedTicks < 10) return;
+        partyDetectMissedDone = true;
+
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.theWorld == null || mc.thePlayer == null) return;
+
+        int missed = 0;
+        for (Object obj : mc.theWorld.playerEntities) {
+            if (!(obj instanceof EntityPlayer)) continue;
+            EntityPlayer p = (EntityPlayer) obj;
+            if (p == mc.thePlayer) continue;
+            missed++;
+        }
+        if (missed > 0) {
+            print(PREFIX + "\u00a7ePartyDetector: \u00a77missed \u00a7c" + missed
+                    + " \u00a77player" + (missed == 1 ? "" : "s")
+                    + " \u00a78(already in lobby)");
+        }
+    }
+
+    /**
+     * Another player entity spawned in the client world.
+     * Counts joins inside a 1s window; alerts when count reaches the mode party size.
+     */
+    public void onPartyDetectorPlayerJoin(EntityPlayer player) {
+        if (!LazifyConfig.INSTANCE.isPartyDetector()) return;
+        if (player == null) return;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer == null || player == mc.thePlayer) return;
+        if (partyDetectGameStarting) return;
+        if (!isPartyDetectorPregame()) return;
+
+        int need = partyDetectorExpectedSize();
+        if (need <= 0) return; // wrong mode / mode toggle off / mode unknown
+
+        long now = System.currentTimeMillis();
+        if (!partyDetectCounting) {
+            partyDetectLastJoinMs = now;
+        }
+
+        if (now - partyDetectLastJoinMs <= PARTY_DETECT_WINDOW_MS) {
+            partyDetectCounter++;
+            partyDetectCounting = true;
+            debug("PartyDetector join +" + player.getName() + " counter=" + partyDetectCounter
+                    + " need=" + need + " mode=" + currentBwMode);
+        } else {
+            // Gap too large — drop this join and reset; next join starts a fresh cluster
+            partyDetectCounting = false;
+            partyDetectLastJoinMs = 0L;
+            partyDetectCounter = 0;
+            return;
+        }
+
+        if (partyDetectCounter >= need) {
+            int size = partyDetectCounter;
+            partyDetectCounter = 0;
+            partyDetectLastJoinMs = 0L;
+            partyDetectCounting = false;
+            alertPartyDetector(size);
+        }
+    }
+
+    private void tickPartyDetector() {
+        // Stop counting once the game is live
+        if (status == 3 || partyDetectGameStarting) {
+            partyDetectCounter = 0;
+            partyDetectCounting = false;
+        }
+    }
+
+    private boolean isPartyDetectorPregame() {
+        if (status == 3) return false;
+        return status == 2 || inBwPregame;
+    }
+
+    /** Expected party size for the active BW mode, or 0 if detection should stay off. */
+    private int partyDetectorExpectedSize() {
+        LazifyConfig c = LazifyConfig.INSTANCE;
+        int mode = currentBwMode;
+        if (mode <= 0) mode = detectBedwarsMode(getSidebarLines());
+        switch (mode) {
+            case 2: return c.isPartyDetectorBw2s() ? 2 : 0;
+            case 3: return c.isPartyDetectorBw3s() ? 3 : 0;
+            case 4: return c.isPartyDetectorBw4s() ? 4 : 0;
+            case 5: return c.isPartyDetectorBw4v4() ? 4 : 0;
+            default: return 0;
+        }
+    }
+
+    private void alertPartyDetector(int size) {
+        if (partyDetectGameStarting || status == 3) return;
+        print(PREFIX + "\u00a7dPartyDetector: \u00a77A party of \u00a7c" + size + "\u00a77 joined.");
+        debug("PartyDetector alert size=" + size + " mode=" + currentBwMode);
+        if (LazifyConfig.INSTANCE.isPartyDetectorPing()) {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc.thePlayer != null) {
+                mc.thePlayer.playSound("note.pling", 1.0F, 1.2F);
+            }
+        }
+    }
+
+    void notePartyDetectorGameStarting() {
+        partyDetectGameStarting = true;
+        partyDetectCounter = 0;
+        partyDetectCounting = false;
+    }
+
+    // ==========================================================================
+    // Game result chat — teammate kills / finals / beds
+    // ==========================================================================
+
+    private void resetGameCombatTracking() {
+        gameCombatStats.clear();
+        gameTeamByUuid.clear();
+        gameNameByUuid.clear();
+        gameResultSent = false;
+        selfEliminated = false;
+        ourTeamWiped = false;
+        bwGameStartMs = 0L;
+    }
+
+    private boolean hasBeenInBwGameLongEnough() {
+        return bwGameStartMs > 0L && (System.currentTimeMillis() - bwGameStartMs) >= GAME_RESULT_MIN_MS;
+    }
+
+    private void noteSelfEliminated(String reason) {
+        if (selfEliminated) return;
+        selfEliminated = true;
+        debug("Self eliminated (" + reason + ")");
+        trySendEliminationGameResult();
+    }
+
+    private void noteOurTeamWiped(String teamColor) {
+        if (ourTeamWiped) return;
+        ourTeamWiped = true;
+        debug("Our team wiped (" + teamColor + ")");
+        trySendEliminationGameResult();
+    }
+
+    private void trySendEliminationGameResult() {
+        if (!selfEliminated || !ourTeamWiped) return;
+        maybeSendGameResult("self-elim+team-wipe");
+    }
+
+    /** True when TEAM ELIMINATED color matches our scoreboard / tracked team. */
+    private boolean eliminatedColorMatchesSelf(String eliminatedColor) {
+        if (eliminatedColor == null || eliminatedColor.isEmpty()) return false;
+        String selfKey = resolveSelfTeamKey();
+        if (selfKey == null || selfKey.isEmpty()) return false;
+        String e = eliminatedColor.toLowerCase(Locale.ROOT);
+        String s = selfKey.toLowerCase(Locale.ROOT);
+        if (s.contains(e) || e.contains(s)) return true;
+        int eo = teamOrderFromName(e);
+        int so = teamOrderFromName(s);
+        if (eo != 999 && eo == so) return true;
+        String marker = getTeamMarker(selfKey);
+        return !marker.isEmpty() && e.startsWith(marker.toLowerCase(Locale.ROOT));
+    }
+
+    private String resolveSelfTeamKey() {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer == null) return null;
+        String selfUuid = mc.thePlayer.getGameProfile().getId().toString().replace("-", "");
+        String tracked = gameTeamByUuid.get(selfUuid);
+        if (tracked != null && !tracked.isEmpty()) return tracked;
+        if (mc.theWorld != null) {
+            ScorePlayerTeam t = mc.theWorld.getScoreboard().getPlayersTeam(mc.thePlayer.getName());
+            if (t != null && t.getRegisteredName() != null) return t.getRegisteredName();
+        }
+        return null;
+    }
+
+    /** Watch chat for self final / "You have been eliminated!" + our TEAM ELIMINATED. */
+    private void handleGameResultChatTriggers(String msg) {
+        if (!wasInBwGame || gameResultSent || msg == null || msg.isEmpty()) return;
+
+        if (msg.equalsIgnoreCase("You have been eliminated!")) {
+            noteSelfEliminated("chat");
+        }
+
+        if (msg.endsWith("FINAL KILL!")) {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc.thePlayer != null) {
+                String victim = msg.split(" ")[0];
+                if (victim.equalsIgnoreCase(mc.thePlayer.getName())) {
+                    noteSelfEliminated("self-final-kill");
+                }
+            }
+        }
+
+        Matcher teamElim = TEAM_ELIMINATED.matcher(msg);
+        if (teamElim.matches()) {
+            String color = teamElim.group(1);
+            if (eliminatedColorMatchesSelf(color)) {
+                noteOurTeamWiped(color);
+            } else {
+                debug("TEAM ELIMINATED ignored (not us): " + color + " selfTeam=" + resolveSelfTeamKey());
+            }
+        }
+    }
+
+    private void rememberGameTeam(String uuid, String name) {
+        if (uuid == null || uuid.isEmpty()) return;
+        if (name != null && !name.isEmpty()) gameNameByUuid.put(uuid, name);
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.theWorld == null || name == null || name.isEmpty()) return;
+        ScorePlayerTeam team = mc.theWorld.getScoreboard().getPlayersTeam(name);
+        if (team != null && team.getRegisteredName() != null) {
+            gameTeamByUuid.put(uuid, team.getRegisteredName());
+        }
+    }
+
+    private void recordGameCombatFromChat(String msg) {
+        if (!wasInBwGame && status != 3) return;
+        if (msg == null || msg.isEmpty()) return;
+
+        boolean isFinal = msg.endsWith("FINAL KILL!");
+        String detectMsg = isFinal ? msg.substring(0, msg.length() - "FINAL KILL!".length()).trim() : msg;
+        if (detectMsg.endsWith(".")) {
+            // keep as-is for KillMessageDetector
+        }
+
+        KillMessageDetector.Match km = KillMessageDetector.detect(detectMsg);
+        if (km == null) km = KillMessageDetector.detect(msg);
+        if (km == null || km.killer == null || km.killer.isEmpty()) return;
+
+        String uuid = findUuidForUsername(km.killer);
+        if (uuid == null) {
+            // Still count under a synthetic key so unknown killers aren't dropped entirely
+            uuid = "name:" + km.killer.toLowerCase();
+        }
+        gameNameByUuid.put(uuid, km.killer);
+        rememberGameTeam(uuid, km.killer);
+
+        boolean isBed = isBedBreakMessage(detectMsg) || isBedBreakMessage(msg);
+        int[] stats = gameCombatStats.get(uuid);
+        if (stats == null) {
+            stats = new int[3];
+            gameCombatStats.put(uuid, stats);
+        }
+        if (isBed) {
+            stats[2]++;
+        } else if (isFinal) {
+            stats[0]++;
+            stats[1]++;
+        } else {
+            stats[0]++;
+        }
+        debug("Game combat: " + km.killer + " kills=" + stats[0] + " finals=" + stats[1]
+                + " beds=" + stats[2] + (isBed ? " (bed)" : isFinal ? " (final)" : ""));
+    }
+
+    private static boolean isBedBreakMessage(String msg) {
+        if (msg == null) return false;
+        String lower = msg.toLowerCase();
+        return lower.contains(" bed ") || lower.contains("bed was") || lower.contains("bed had")
+                || lower.contains("bed has") || lower.contains("bed'") || lower.contains("'s bed");
+    }
+
+    private void maybeSendGameResult(String reason) {
+        if (gameResultSent) return;
+        if (!LazifyConfig.INSTANCE.isGameResultChat()) {
+            gameResultSent = true;
+            return;
+        }
+        if (!wasInBwGame) return;
+        if (!hasBeenInBwGameLongEnough()) {
+            debug("Game result skipped (need 30s in-game): " + reason
+                    + " elapsed=" + (bwGameStartMs > 0 ? (System.currentTimeMillis() - bwGameStartMs) : -1) + "ms");
+            return;
+        }
+        gameResultSent = true;
+        debug("Game result trigger: " + reason);
+        sendTeammateGameResult();
+    }
+
+    private void sendTeammateGameResult() {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer == null) return;
+
+        String selfName = mc.thePlayer.getName();
+        String selfUuid = mc.thePlayer.getGameProfile().getId().toString().replace("-", "");
+        rememberGameTeam(selfUuid, selfName);
+        gameNameByUuid.put(selfUuid, selfName);
+
+        String selfTeam = gameTeamByUuid.get(selfUuid);
+        if (selfTeam == null && mc.theWorld != null) {
+            ScorePlayerTeam t = mc.theWorld.getScoreboard().getPlayersTeam(selfName);
+            if (t != null) selfTeam = t.getRegisteredName();
+        }
+        if (selfTeam == null || selfTeam.isEmpty()) {
+            // Fallback: still show your own tracked stats
+            int[] mine = gameCombatStats.get(selfUuid);
+            if (mine == null) mine = new int[3];
+            print(PREFIX + "\u00a7dGame Result \u00a78(no team)");
+            print(PREFIX + "\u00a7e" + selfName + "\u00a77: \u00a7f" + mine[0]
+                    + "\u00a77 kills  \u00a7c" + mine[1] + "\u00a77 finals  \u00a7a" + mine[2] + "\u00a77 beds");
+            return;
+        }
+
+        List<String> teammates = new ArrayList<>();
+        for (Map.Entry<String, String> e : gameTeamByUuid.entrySet()) {
+            if (selfTeam.equals(e.getValue())) teammates.add(e.getKey());
+        }
+        if (!teammates.contains(selfUuid)) teammates.add(selfUuid);
+
+        // Prefer players we actually saw; sort by finals then kills then beds
+        Collections.sort(teammates, (a, b) -> {
+            int[] sa = gameCombatStats.containsKey(a) ? gameCombatStats.get(a) : new int[3];
+            int[] sb = gameCombatStats.containsKey(b) ? gameCombatStats.get(b) : new int[3];
+            if (sa[1] != sb[1]) return Integer.compare(sb[1], sa[1]);
+            if (sa[0] != sb[0]) return Integer.compare(sb[0], sa[0]);
+            return Integer.compare(sb[2], sa[2]);
+        });
+
+        print(PREFIX + "\u00a7dGame Result \u00a77\u2013 teammate combat");
+        for (String uuid : teammates) {
+            String name = gameNameByUuid.get(uuid);
+            if (name == null || name.isEmpty()) name = uuidToName.get(uuid);
+            if (name == null || name.isEmpty()) name = uuid;
+            int[] s = gameCombatStats.get(uuid);
+            if (s == null) s = new int[3];
+            boolean self = uuid.equals(selfUuid) || name.equalsIgnoreCase(selfName);
+            print(PREFIX + (self ? "\u00a7b" : "\u00a7e") + name
+                    + "\u00a77: \u00a7f" + s[0] + "\u00a77k  \u00a7c" + s[1] + "\u00a77fk  \u00a7a" + s[2] + "\u00a77beds");
         }
     }
 
@@ -1842,6 +2507,9 @@ public class OverlayManager {
         overlayPlayers.clear();
         tagCache.clear();
         pingCache.clear();
+        sessionCache.clear();
+        sessionCacheAt.clear();
+        sessionFetchQueue.clear();
         nickRealUuid.clear();
         BordicSuperstar.clearCache();
         synchronized (currentPlayers) { currentPlayers.clear(); }
@@ -2136,6 +2804,7 @@ public class OverlayManager {
             for (String uuid : currentPlayers) {
                 Map<String, Object> ps = overlayPlayers.get(uuid);
                 if (ps == null) { overlayPlayers.remove(uuid); continue; }
+                if (!passesStatFilter(uuid, ps)) continue;
 
                 int tint = resolveRowTint(uuid, ps, rowIndex);
                 if (tint != 0) {
@@ -2290,6 +2959,10 @@ public class OverlayManager {
         if (msg.contains("Protect your bed and destroy the enemy beds")) {
             inBwPregame = true;
             debug("Game start detected (Protect your bed) | lobby=" + currentLobby + " status=" + status);
+        }
+
+        if (msg.contains("The game starts in 1 second!")) {
+            notePartyDetectorGameStarting();
         }
 
         // ── Party list parsing (/pl response) ─────────────────────────────────
@@ -2449,7 +3122,10 @@ public class OverlayManager {
                 recordNickKillMessage(km);
             }
             recordNickStarFromLine(msg);
+            recordGameCombatFromChat(msg);
         }
+
+        handleGameResultChatTriggers(msg);
 
         // Remove players from overlay on final kill
         if ((inBwPregame || status >= 2) && LazifyConfig.INSTANCE.isRemoveFinalKill()) {
@@ -2910,6 +3586,9 @@ public class OverlayManager {
     public void onWorldChange() {
         MellowTabOverlay.resetScroll();
         debug("World change: clearing overlay, resetting state | was lobby=" + currentLobby + " status=" + status);
+        if (wasInBwGame && !gameResultSent) {
+            maybeSendGameResult("worldchange");
+        }
         dowho = true;
         didwho = false;
         inBwPregame = false;
@@ -2919,6 +3598,11 @@ public class OverlayManager {
         partySent = false;
         parsingPartyList = false;
         suppressPartyChat = false;
+        resetPartyDetector();
+        resetGameCombatTracking();
+        wasInBwGame = false;
+        bwGameStartMs = 0L;
+        statFilterChatSent.clear();
         currentBwMode = -1;
         lobbyMaxPlayers = -1;
         overlayTicks = 0;
@@ -2966,6 +3650,22 @@ public class OverlayManager {
             return;
         }
 
+        // When Bordic key + m/w/d columns are on, lifetime comes from bulk session current.value
+        if (preferBordicSessionLifetime()) {
+            if (tryApplySessionLifetime(overlayUuid, fetchUuid, lobby)) return;
+            debugFromThread("Deferring lifetime stats to Bordic session bulk for " + username);
+            return;
+        }
+
+        fetchPlayerStatsWaterfall(overlayUuid, fetchUuid, lobby, username);
+    }
+
+    /** Bordic bulk sessions include lifetime Bedwars in current.value — prefer that over per-player waterfall. */
+    private boolean preferBordicSessionLifetime() {
+        return !bordicKey().isEmpty() && anyPeriodSessionColumnEnabled();
+    }
+
+    private void fetchPlayerStatsWaterfall(String overlayUuid, String fetchUuid, String lobby, String username) {
         Map<String, Object> playerStats = new ConcurrentHashMap<>();
         try {
             debugFromThread("Fetching stats for " + username + " (fetch " + fetchUuid + ", overlay " + overlayUuid + ")");
@@ -2994,6 +3694,31 @@ public class OverlayManager {
         }
 
         if (isInOverlay(overlayUuid) && currentLobby.equals(lobby)) addToOverlay(overlayUuid, playerStats);
+    }
+
+    /** Apply lifetime stats from a cached Bordic session snapshot's current.value. */
+    private boolean tryApplySessionLifetime(String overlayUuid, String fetchUuid, String lobby) {
+        Map<String, BordicSessions.Snapshot> byPeriod = sessionCache.get(fetchUuid);
+        if (byPeriod == null || byPeriod.isEmpty()) return false;
+        BordicSessions.Snapshot withLife = null;
+        for (BordicSessions.Snapshot snap : byPeriod.values()) {
+            if (snap != null && snap.hasLifetime()) {
+                withLife = snap;
+                break;
+            }
+        }
+        if (withLife == null) return false;
+
+        String username = uuidToName.getOrDefault(overlayUuid, uuidToName.get(fetchUuid));
+        if (username == null) username = "";
+        JsonWrapper parsed = PlayerStatsParser.fromBedwarsStats(username, withLife.currentBedwars);
+        if (parsed == null) return false;
+
+        Map<String, Object> playerStats = parseStats(parsed, fetchUuid);
+        preserveDenickDisplay(overlayUuid, playerStats);
+        debugFromThread("Lifetime stats from Bordic session current for " + username);
+        if (isInOverlay(overlayUuid) && currentLobby.equals(lobby)) addToOverlay(overlayUuid, playerStats);
+        return true;
     }
 
     private Map<String, Object> buildApiNickedStats(String username) {
@@ -3083,6 +3808,12 @@ public class OverlayManager {
             putRatioStat(stats, BBLR_KEY, BBLR_VALUE, overall, "bblr", "beds_broken", "beds_lost");
             putRatioStat(stats, KDR_KEY, KDR_VALUE, overall, "kdr", "kills", "deaths");
 
+            // Raw counts
+            putCountStat(stats, KILLS_KEY, KILLS_VALUE, overall, "kills");
+            putCountStat(stats, FINALS_KEY, FINALS_VALUE, overall, "final_kills");
+            putCountStat(stats, BEDS_KEY, BEDS_VALUE, overall, "beds_broken");
+            putCountStat(stats, WINS_KEY, WINS_VALUE, overall, "wins");
+
             // Session
             long lastLogin  = parseEpochMs(network.exists() ? network.get("last_login",  network.get("lastLogin",  "0")) : "0");
             long lastLogout = parseEpochMs(network.exists() ? network.get("last_logout", network.get("lastLogout", "0")) : "0");
@@ -3158,6 +3889,17 @@ public class OverlayManager {
         ratio = ColorUtil.round(ratio, decimals);
         stats.put(key, ColorUtil.formatRatio(ratio, decimals));
         stats.put(valueKey, ratio);
+    }
+
+    private void putCountStat(Map<String, Object> stats, String key, String valueKey,
+                              JsonWrapper overall, String apiKey) {
+        long n = 0L;
+        try {
+            n = (long) Double.parseDouble(overall.get(apiKey, "0"));
+        } catch (Exception ignored) {}
+        if (n < 0) n = 0;
+        stats.put(valueKey, (double) n);
+        stats.put(key, ColorUtil.formatCount(n, LazifyConfig.INSTANCE.isAbbreviateNumbers()));
     }
 
     private static long parseEpochMs(String raw) {
@@ -3571,7 +4313,208 @@ public class OverlayManager {
 
     private static final String BORDIC_PING_URL = "https://bordic.xyz/api/v2/resources/ping";
 
+    private boolean anyPeriodSessionColumnEnabled() {
+        LazifyConfig c = LazifyConfig.INSTANCE;
+        return c.isColDailyFkdr() || c.isColDailyWlr() || c.isColDailyStars() || c.isColDailyBblr() || c.isColDailyKdr()
+            || c.isColWeeklyFkdr() || c.isColWeeklyWlr() || c.isColWeeklyStars() || c.isColWeeklyBblr() || c.isColWeeklyKdr()
+            || c.isColMonthlyFkdr() || c.isColMonthlyWlr() || c.isColMonthlyStars() || c.isColMonthlyBblr() || c.isColMonthlyKdr();
+    }
+
+    private boolean periodColumnsEnabled(BordicSessions.Period period) {
+        LazifyConfig c = LazifyConfig.INSTANCE;
+        switch (period) {
+            case DAILY:
+                return c.isColDailyFkdr() || c.isColDailyWlr() || c.isColDailyStars()
+                        || c.isColDailyBblr() || c.isColDailyKdr();
+            case WEEKLY:
+                return c.isColWeeklyFkdr() || c.isColWeeklyWlr() || c.isColWeeklyStars()
+                        || c.isColWeeklyBblr() || c.isColWeeklyKdr();
+            case MONTHLY:
+                return c.isColMonthlyFkdr() || c.isColMonthlyWlr() || c.isColMonthlyStars()
+                        || c.isColMonthlyBblr() || c.isColMonthlyKdr();
+            default:
+                return false;
+        }
+    }
+
+    private static String periodValueKey(String colKey) {
+        if (colKey == null) return "";
+        switch (colKey) {
+            case DAILY_FKDR_KEY: return DAILY_FKDR_VALUE;
+            case DAILY_WLR_KEY: return DAILY_WLR_VALUE;
+            case DAILY_BBLR_KEY: return DAILY_BBLR_VALUE;
+            case DAILY_KDR_KEY: return DAILY_KDR_VALUE;
+            case DAILY_STARS_KEY: return DAILY_STARS_VALUE;
+            case WEEKLY_FKDR_KEY: return WEEKLY_FKDR_VALUE;
+            case WEEKLY_WLR_KEY: return WEEKLY_WLR_VALUE;
+            case WEEKLY_BBLR_KEY: return WEEKLY_BBLR_VALUE;
+            case WEEKLY_KDR_KEY: return WEEKLY_KDR_VALUE;
+            case WEEKLY_STARS_KEY: return WEEKLY_STARS_VALUE;
+            case MONTHLY_FKDR_KEY: return MONTHLY_FKDR_VALUE;
+            case MONTHLY_WLR_KEY: return MONTHLY_WLR_VALUE;
+            case MONTHLY_BBLR_KEY: return MONTHLY_BBLR_VALUE;
+            case MONTHLY_KDR_KEY: return MONTHLY_KDR_VALUE;
+            case MONTHLY_STARS_KEY: return MONTHLY_STARS_VALUE;
+            default: return colKey + "value";
+        }
+    }
+
+    /** Queue Bordic bulk session fetch for enabled daily/weekly/monthly columns. */
+    private void requestBordicSessions(String overlayUuid, String lobby) {
+        if (!anyPeriodSessionColumnEnabled()) return;
+        if (bordicKey().isEmpty()) return;
+        String fetchUuid = statsUuidFor(overlayUuid);
+        if (!isV4UndashedUuid(fetchUuid)) return;
+        sessionFetchQueue.offer(new String[]{overlayUuid, fetchUuid, lobby == null ? "" : lobby});
+        kickSessionFlusher();
+    }
+
+    private void kickSessionFlusher() {
+        synchronized (sessionFetchQueue) {
+            if (sessionFlushRunning) return;
+            sessionFlushRunning = true;
+        }
+        new Thread(() -> {
+            try {
+                Thread.sleep(250);
+                flushSessionFetchQueue();
+            } catch (InterruptedException ignored) {
+            } catch (Exception e) {
+                debugFromThread("Bordic sessions flush error: " + e.getMessage());
+            } finally {
+                synchronized (sessionFetchQueue) {
+                    sessionFlushRunning = false;
+                }
+                if (!sessionFetchQueue.isEmpty()) kickSessionFlusher();
+            }
+        }, "lazify-bordic-sessions").start();
+    }
+
+    private void flushSessionFetchQueue() {
+        String key = bordicKey();
+        if (key.isEmpty() || !anyPeriodSessionColumnEnabled()) {
+            sessionFetchQueue.clear();
+            return;
+        }
+
+        // Dedupe by fetchUuid, keep overlay uuid + lobby for apply
+        LinkedHashMap<String, String[]> pending = new LinkedHashMap<>();
+        String[] item;
+        while ((item = sessionFetchQueue.poll()) != null) {
+            if (item.length < 3) continue;
+            pending.put(item[1], item);
+            if (pending.size() >= 10) break;
+        }
+        if (pending.isEmpty()) return;
+
+        List<String> fetchUuids = new ArrayList<>(pending.keySet());
+        // Serve from cache when fresh
+        List<String> needFetch = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        for (String fu : fetchUuids) {
+            Long at = sessionCacheAt.get(fu);
+            if (at != null && now - at < SESSION_CACHE_TTL_MS && sessionCache.containsKey(fu)) {
+                String[] meta = pending.get(fu);
+                applyCachedSessions(meta[0], fu, meta[2]);
+            } else {
+                needFetch.add(fu);
+            }
+        }
+
+        for (BordicSessions.Period period : BordicSessions.Period.values()) {
+            if (!periodColumnsEnabled(period)) continue;
+            if (needFetch.isEmpty()) break;
+            debugFromThread("Bordic sessions bulk " + period.path + " for " + needFetch.size() + " uuids");
+            Map<String, BordicSessions.Snapshot> batch =
+                    BordicSessions.fetchBulk(period, key, needFetch, 12000);
+            for (String fu : needFetch) {
+                BordicSessions.Snapshot snap = batch.get(fu);
+                if (snap == null) snap = BordicSessions.Snapshot.missing("no response");
+                Map<String, BordicSessions.Snapshot> byPeriod = sessionCache.get(fu);
+                if (byPeriod == null) {
+                    byPeriod = new ConcurrentHashMap<>();
+                    sessionCache.put(fu, byPeriod);
+                }
+                byPeriod.put(period.path, snap);
+                sessionCacheAt.put(fu, System.currentTimeMillis());
+            }
+        }
+
+        for (String fu : needFetch) {
+            String[] meta = pending.get(fu);
+            if (meta != null) applyCachedSessions(meta[0], fu, meta[2]);
+        }
+
+        // Leftover queue items (beyond 10) will be picked up by kickSessionFlusher re-check
+    }
+
+    private void applyCachedSessions(String overlayUuid, String fetchUuid, String lobby) {
+        if (!isInOverlay(overlayUuid) || !currentLobby.equals(lobby)) return;
+        Map<String, BordicSessions.Snapshot> byPeriod = sessionCache.get(fetchUuid);
+        if (byPeriod == null) byPeriod = Collections.emptyMap();
+        Map<String, Object> data = new ConcurrentHashMap<>();
+        if (periodColumnsEnabled(BordicSessions.Period.DAILY)) {
+            putPeriodSnapshot(data, byPeriod.get(BordicSessions.Period.DAILY.path),
+                    DAILY_FKDR_KEY, DAILY_FKDR_VALUE, DAILY_WLR_KEY, DAILY_WLR_VALUE,
+                    DAILY_BBLR_KEY, DAILY_BBLR_VALUE, DAILY_KDR_KEY, DAILY_KDR_VALUE,
+                    DAILY_STARS_KEY, DAILY_STARS_VALUE);
+        }
+        if (periodColumnsEnabled(BordicSessions.Period.WEEKLY)) {
+            putPeriodSnapshot(data, byPeriod.get(BordicSessions.Period.WEEKLY.path),
+                    WEEKLY_FKDR_KEY, WEEKLY_FKDR_VALUE, WEEKLY_WLR_KEY, WEEKLY_WLR_VALUE,
+                    WEEKLY_BBLR_KEY, WEEKLY_BBLR_VALUE, WEEKLY_KDR_KEY, WEEKLY_KDR_VALUE,
+                    WEEKLY_STARS_KEY, WEEKLY_STARS_VALUE);
+        }
+        if (periodColumnsEnabled(BordicSessions.Period.MONTHLY)) {
+            putPeriodSnapshot(data, byPeriod.get(BordicSessions.Period.MONTHLY.path),
+                    MONTHLY_FKDR_KEY, MONTHLY_FKDR_VALUE, MONTHLY_WLR_KEY, MONTHLY_WLR_VALUE,
+                    MONTHLY_BBLR_KEY, MONTHLY_BBLR_VALUE, MONTHLY_KDR_KEY, MONTHLY_KDR_VALUE,
+                    MONTHLY_STARS_KEY, MONTHLY_STARS_VALUE);
+        }
+        if (!data.isEmpty()) addToOverlay(overlayUuid, data);
+
+        // Piggyback lifetime from current.value when Bordic key is set
+        if (preferBordicSessionLifetime()) {
+            if (!tryApplySessionLifetime(overlayUuid, fetchUuid, lobby)) {
+                String username = uuidToName.getOrDefault(overlayUuid, uuidToName.get(fetchUuid));
+                if (username != null && !username.isEmpty()) {
+                    debugFromThread("Bordic session had no lifetime for " + username + "; falling back to waterfall");
+                    final String ou = overlayUuid, fu = fetchUuid, lb = lobby, un = username;
+                    new Thread(() -> fetchPlayerStatsWaterfall(ou, fu, lb, un), "lazify-stats-fallback").start();
+                }
+            }
+        }
+    }
+
+    private void putPeriodSnapshot(Map<String, Object> data, BordicSessions.Snapshot snap,
+                                   String fkdrKey, String fkdrVal,
+                                   String wlrKey, String wlrVal,
+                                   String bblrKey, String bblrVal,
+                                   String kdrKey, String kdrVal,
+                                   String starsKey, String starsVal) {
+        int decimals = LazifyConfig.INSTANCE.getFkdrDecimals();
+        if (snap == null || !snap.ok) {
+            data.put(fkdrKey, "\u00a77-");
+            data.put(wlrKey, "\u00a77-");
+            data.put(bblrKey, "\u00a77-");
+            data.put(kdrKey, "\u00a77-");
+            data.put(starsKey, "\u00a77-");
+            return;
+        }
+        data.put(fkdrKey, BordicSessions.formatRatioCell(snap.fkdr, decimals));
+        data.put(fkdrVal, snap.fkdr);
+        data.put(wlrKey, BordicSessions.formatRatioCell(snap.wlr, decimals));
+        data.put(wlrVal, snap.wlr);
+        data.put(bblrKey, BordicSessions.formatRatioCell(snap.bblr, decimals));
+        data.put(bblrVal, snap.bblr);
+        data.put(kdrKey, BordicSessions.formatRatioCell(snap.kdr, decimals));
+        data.put(kdrVal, snap.kdr);
+        data.put(starsKey, BordicSessions.formatStarsCell(snap));
+        data.put(starsVal, (double) snap.starsGained);
+    }
+
     private void handleBordicPing(String overlayUuid, String lobby) {
+        requestBordicSessions(overlayUuid, lobby);
         if (!LazifyConfig.INSTANCE.isColPing()) return;
         String fetchUuid = statsUuidFor(overlayUuid);
         if (!isV4UndashedUuid(fetchUuid)) {
@@ -3660,6 +4603,8 @@ public class OverlayManager {
         "fkdrcolors","autowho","whodelay","hidewho","autopl","hidepl","dodgewarning","dodgethreshold","teamthreatchat","teamthreatthreshold",
         "threatfkdrweight","threatstarweight","threatwinstreakweight","threaturchinweight","threatteamsizeweight",
         "threatencounterweight","threatnickweight","nohurtcam","antidebuff","teamfkdrchat",
+        "partydetector","partydetectorping","partydetectorshowmissed","partydetectorbw2s","partydetectorbw3s","partydetectorbw4s","partydetectorbw4v4",
+        "gameresultchat","statfilter","statfilterminfkdr","statfilterminstars","statfilterchat",
         "sendnicked","sendurchinreason","keybindhold","showontab","overlayovertab","statsdisplay","keybind",
         "debug","col","sortby","sortmode","winstreak","enctimeout",
         "x","y","colgap","rowgap","pad","scale","bgopacity","bgr","bgg","bgb","bghue","headerhue",
@@ -3667,8 +4612,12 @@ public class OverlayManager {
         "overlaytheme","textshadow","headerbold","stripes","fkdrdecimals","abbrev","pingstyle"
     };
     public static final String[] ALL_COLUMNS = {
-        "encounters","username","rank","star","fkdr","wlr","bblr","kdr","winstreaks",
-        "urchin","session","level","ping"
+        "encounters","username","rank","star","fkdr","wlr","bblr","kdr",
+        "kills","finals","beds","wins",
+        "dailyfkdr","dailywlr","dailystars","dailybblr","dailykdr",
+        "weeklyfkdr","weeklywlr","weeklystars","weeklybblr","weeklykdr",
+        "monthlyfkdr","monthlywlr","monthlystars","monthlybblr","monthlykdr",
+        "winstreaks","urchin","session","level","ping"
     };
 
     /** Set by /ov|/lazify with no args; opened next client tick after chat closes. */
@@ -3960,6 +4909,32 @@ public class OverlayManager {
                     cfg.setTeamThreatChat(args.length > 1 ? parseBool(args[1]) : !cfg.isTeamThreatChat()); break;
                 case "teamfkdrchat":
                     cfg.setTeamFkdrChat(args.length > 1 ? parseBool(args[1]) : !cfg.isTeamFkdrChat()); break;
+                case "partydetector":
+                    cfg.setPartyDetector(args.length > 1 ? parseBool(args[1]) : !cfg.isPartyDetector()); break;
+                case "partydetectorping":
+                    cfg.setPartyDetectorPing(args.length > 1 ? parseBool(args[1]) : !cfg.isPartyDetectorPing()); break;
+                case "partydetectorshowmissed":
+                    cfg.setPartyDetectorShowMissed(args.length > 1 ? parseBool(args[1]) : !cfg.isPartyDetectorShowMissed()); break;
+                case "partydetectorbw2s":
+                    cfg.setPartyDetectorBw2s(args.length > 1 ? parseBool(args[1]) : !cfg.isPartyDetectorBw2s()); break;
+                case "partydetectorbw3s":
+                    cfg.setPartyDetectorBw3s(args.length > 1 ? parseBool(args[1]) : !cfg.isPartyDetectorBw3s()); break;
+                case "partydetectorbw4s":
+                    cfg.setPartyDetectorBw4s(args.length > 1 ? parseBool(args[1]) : !cfg.isPartyDetectorBw4s()); break;
+                case "partydetectorbw4v4":
+                    cfg.setPartyDetectorBw4v4(args.length > 1 ? parseBool(args[1]) : !cfg.isPartyDetectorBw4v4()); break;
+                case "gameresultchat":
+                    cfg.setGameResultChat(args.length > 1 ? parseBool(args[1]) : !cfg.isGameResultChat()); break;
+                case "statfilter":
+                    cfg.setStatFilter(args.length > 1 ? parseBool(args[1]) : !cfg.isStatFilter()); break;
+                case "statfilterminfkdr":
+                    if (args.length < 2) { print(PREFIX + "\u00a7estatfilterminfkdr: \u00a73" + cfg.getStatFilterMinFkdr()); return; }
+                    cfg.setStatFilterMinFkdr(Math.max(0.0, Double.parseDouble(args[1]))); break;
+                case "statfilterminstars":
+                    if (args.length < 2) { print(PREFIX + "\u00a7estatfilterminstars: \u00a73" + cfg.getStatFilterMinStars()); return; }
+                    cfg.setStatFilterMinStars(Math.max(0, Integer.parseInt(args[1]))); break;
+                case "statfilterchat":
+                    cfg.setStatFilterChat(args.length > 1 ? parseBool(args[1]) : !cfg.isStatFilterChat()); break;
                 case "nohurtcam":
                     cfg.setNoHurtCam(args.length > 1 ? parseBool(args[1]) : !cfg.isNoHurtCam()); break;
                 case "antidebuff":
@@ -4147,6 +5122,25 @@ public class OverlayManager {
                         case "wlr":        curVal = cfg.isColWlr();        break;
                         case "bblr":       curVal = cfg.isColBblr();       break;
                         case "kdr":        curVal = cfg.isColKdr();        break;
+                        case "kills":      curVal = cfg.isColKills();      break;
+                        case "finals":     curVal = cfg.isColFinals();     break;
+                        case "beds":       curVal = cfg.isColBeds();       break;
+                        case "wins":       curVal = cfg.isColWins();       break;
+                        case "dailyfkdr":  curVal = cfg.isColDailyFkdr();  break;
+                        case "dailywlr":   curVal = cfg.isColDailyWlr();   break;
+                        case "dailystars": curVal = cfg.isColDailyStars(); break;
+                        case "dailybblr":  curVal = cfg.isColDailyBblr();  break;
+                        case "dailykdr":   curVal = cfg.isColDailyKdr();   break;
+                        case "weeklyfkdr": curVal = cfg.isColWeeklyFkdr(); break;
+                        case "weeklywlr":  curVal = cfg.isColWeeklyWlr();  break;
+                        case "weeklystars":curVal = cfg.isColWeeklyStars();break;
+                        case "weeklybblr": curVal = cfg.isColWeeklyBblr(); break;
+                        case "weeklykdr":  curVal = cfg.isColWeeklyKdr();  break;
+                        case "monthlyfkdr": curVal = cfg.isColMonthlyFkdr(); break;
+                        case "monthlywlr":  curVal = cfg.isColMonthlyWlr();  break;
+                        case "monthlystars":curVal = cfg.isColMonthlyStars();break;
+                        case "monthlybblr": curVal = cfg.isColMonthlyBblr(); break;
+                        case "monthlykdr":  curVal = cfg.isColMonthlyKdr();  break;
                         case "winstreaks": curVal = cfg.isColWinstreaks(); break;
                         case "urchin":     curVal = cfg.isColUrchin();     break;
                         case "session":    curVal = cfg.isColSession();    break;
@@ -4176,6 +5170,25 @@ public class OverlayManager {
                         case "wlr":        cfg.setColWlr(newVal);        break;
                         case "bblr":       cfg.setColBblr(newVal);       break;
                         case "kdr":        cfg.setColKdr(newVal);        break;
+                        case "kills":      cfg.setColKills(newVal);      break;
+                        case "finals":     cfg.setColFinals(newVal);     break;
+                        case "beds":       cfg.setColBeds(newVal);       break;
+                        case "wins":       cfg.setColWins(newVal);       break;
+                        case "dailyfkdr":  cfg.setColDailyFkdr(newVal);  break;
+                        case "dailywlr":   cfg.setColDailyWlr(newVal);   break;
+                        case "dailystars": cfg.setColDailyStars(newVal); break;
+                        case "dailybblr":  cfg.setColDailyBblr(newVal);  break;
+                        case "dailykdr":   cfg.setColDailyKdr(newVal);   break;
+                        case "weeklyfkdr": cfg.setColWeeklyFkdr(newVal); break;
+                        case "weeklywlr":  cfg.setColWeeklyWlr(newVal);  break;
+                        case "weeklystars":cfg.setColWeeklyStars(newVal);break;
+                        case "weeklybblr": cfg.setColWeeklyBblr(newVal); break;
+                        case "weeklykdr":  cfg.setColWeeklyKdr(newVal);  break;
+                        case "monthlyfkdr": cfg.setColMonthlyFkdr(newVal); break;
+                        case "monthlywlr":  cfg.setColMonthlyWlr(newVal);  break;
+                        case "monthlystars":cfg.setColMonthlyStars(newVal);break;
+                        case "monthlybblr": cfg.setColMonthlyBblr(newVal); break;
+                        case "monthlykdr":  cfg.setColMonthlyKdr(newVal);  break;
                         case "winstreaks": cfg.setColWinstreaks(newVal); break;
                         case "urchin":     cfg.setColUrchin(newVal);     break;
                         case "session":    cfg.setColSession(newVal);    break;
@@ -4252,6 +5265,18 @@ public class OverlayManager {
             + settingLine("hidepl", c.isHidePl()));
         print(PREFIX + settingLine("dodgewarning", c.isDodgeWarning())
             + settingLine("dodgethreshold", String.valueOf(c.getDodgeThreshold())));
+        print(PREFIX + settingLine("partydetector", c.isPartyDetector())
+            + settingLine("partydetectorping", c.isPartyDetectorPing())
+            + settingLine("partydetectorshowmissed", c.isPartyDetectorShowMissed()));
+        print(PREFIX + settingLine("partydetectorbw2s", c.isPartyDetectorBw2s())
+            + settingLine("partydetectorbw3s", c.isPartyDetectorBw3s())
+            + settingLine("partydetectorbw4s", c.isPartyDetectorBw4s())
+            + settingLine("partydetectorbw4v4", c.isPartyDetectorBw4v4()));
+        print(PREFIX + settingLine("gameresultchat", c.isGameResultChat()));
+        print(PREFIX + settingLine("statfilter", c.isStatFilter())
+            + settingLine("statfilterminfkdr", String.valueOf(c.getStatFilterMinFkdr()))
+            + settingLine("statfilterminstars", String.valueOf(c.getStatFilterMinStars()))
+            + settingLine("statfilterchat", c.isStatFilterChat()));
         print(PREFIX + settingLine("teamthreatchat", c.isTeamThreatChat())
             + settingLine("teamthreatthreshold", ColorUtil.formatDoubleStr(ColorUtil.round(c.getTeamThreatThreshold(), 2))));
         print(PREFIX + settingLine("threatfkdrweight", ColorUtil.formatDoubleStr(ColorUtil.round(c.getThreatFkdrWeight(), 2)))
@@ -4309,6 +5334,21 @@ public class OverlayManager {
             + colLine("encounters", c.isColEncounters()) + colLine("username", c.isColUsername())
             + colLine("rank", c.isColRank()) + colLine("star", c.isColStar()) + colLine("fkdr", c.isColFkdr())
             + colLine("wlr", c.isColWlr()) + colLine("bblr", c.isColBblr()) + colLine("kdr", c.isColKdr()));
+        print(PREFIX
+            + colLine("kills", c.isColKills()) + colLine("finals", c.isColFinals())
+            + colLine("beds", c.isColBeds()) + colLine("wins", c.isColWins()));
+        print(PREFIX
+            + colLine("dailyfkdr", c.isColDailyFkdr()) + colLine("dailywlr", c.isColDailyWlr())
+            + colLine("dailystars", c.isColDailyStars()) + colLine("dailybblr", c.isColDailyBblr())
+            + colLine("dailykdr", c.isColDailyKdr()));
+        print(PREFIX
+            + colLine("weeklyfkdr", c.isColWeeklyFkdr()) + colLine("weeklywlr", c.isColWeeklyWlr())
+            + colLine("weeklystars", c.isColWeeklyStars()) + colLine("weeklybblr", c.isColWeeklyBblr())
+            + colLine("weeklykdr", c.isColWeeklyKdr()));
+        print(PREFIX
+            + colLine("monthlyfkdr", c.isColMonthlyFkdr()) + colLine("monthlywlr", c.isColMonthlyWlr())
+            + colLine("monthlystars", c.isColMonthlyStars()) + colLine("monthlybblr", c.isColMonthlyBblr())
+            + colLine("monthlykdr", c.isColMonthlyKdr()));
         print(PREFIX
             + colLine("winstreaks", c.isColWinstreaks())
             + colLine("urchin", c.isColUrchin())
@@ -4382,6 +5422,9 @@ public class OverlayManager {
             + "  encounters " + boolStr(c.isColEncounters()) + "  username " + boolStr(c.isColUsername())
             + "  rank " + boolStr(c.isColRank()) + "  star " + boolStr(c.isColStar()) + "  fkdr " + boolStr(c.isColFkdr())
             + "  wlr " + boolStr(c.isColWlr()) + "  bblr " + boolStr(c.isColBblr()) + "  kdr " + boolStr(c.isColKdr()));
+        print(PREFIX
+            + "  kills " + boolStr(c.isColKills()) + "  finals " + boolStr(c.isColFinals())
+            + "  beds " + boolStr(c.isColBeds()) + "  wins " + boolStr(c.isColWins()));
         print(PREFIX
             + "  winstreaks " + boolStr(c.isColWinstreaks())
             + "  urchin " + boolStr(c.isColUrchin())
@@ -4474,6 +5517,18 @@ public class OverlayManager {
             case "nohurtcam":       return boolStr(c.isNoHurtCam());
             case "antidebuff":      return boolStr(c.isAntiDebuff());
             case "teamfkdrchat":    return boolStr(c.isTeamFkdrChat());
+            case "partydetector":   return boolStr(c.isPartyDetector());
+            case "partydetectorping": return boolStr(c.isPartyDetectorPing());
+            case "partydetectorshowmissed": return boolStr(c.isPartyDetectorShowMissed());
+            case "partydetectorbw2s": return boolStr(c.isPartyDetectorBw2s());
+            case "partydetectorbw3s": return boolStr(c.isPartyDetectorBw3s());
+            case "partydetectorbw4s": return boolStr(c.isPartyDetectorBw4s());
+            case "partydetectorbw4v4": return boolStr(c.isPartyDetectorBw4v4());
+            case "gameresultchat":   return boolStr(c.isGameResultChat());
+            case "statfilter":       return boolStr(c.isStatFilter());
+            case "statfilterminfkdr": return "\u00a7e" + c.getStatFilterMinFkdr();
+            case "statfilterminstars": return "\u00a7e" + c.getStatFilterMinStars();
+            case "statfilterchat":   return boolStr(c.isStatFilterChat());
             case "sendnicked":       return boolStr(c.isSendNickedToChat());
             case "sendurchinreason": return boolStr(c.isSendUrchinReasonToChat());
             case "keybindhold":      return boolStr(c.isKeybindHold());

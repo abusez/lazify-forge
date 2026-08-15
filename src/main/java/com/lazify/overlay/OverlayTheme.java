@@ -54,6 +54,25 @@ public final class OverlayTheme {
             case OverlayManager.WLR_KEY:
             case OverlayManager.BBLR_KEY:
             case OverlayManager.KDR_KEY:       return 34;
+            case OverlayManager.KILLS_KEY:
+            case OverlayManager.FINALS_KEY:
+            case OverlayManager.BEDS_KEY:
+            case OverlayManager.WINS_KEY:      return 36;
+            case OverlayManager.DAILY_FKDR_KEY:
+            case OverlayManager.WEEKLY_FKDR_KEY:
+            case OverlayManager.MONTHLY_FKDR_KEY:
+            case OverlayManager.DAILY_WLR_KEY:
+            case OverlayManager.WEEKLY_WLR_KEY:
+            case OverlayManager.MONTHLY_WLR_KEY:
+            case OverlayManager.DAILY_BBLR_KEY:
+            case OverlayManager.WEEKLY_BBLR_KEY:
+            case OverlayManager.MONTHLY_BBLR_KEY:
+            case OverlayManager.DAILY_KDR_KEY:
+            case OverlayManager.WEEKLY_KDR_KEY:
+            case OverlayManager.MONTHLY_KDR_KEY: return 40;
+            case OverlayManager.DAILY_STARS_KEY:
+            case OverlayManager.WEEKLY_STARS_KEY:
+            case OverlayManager.MONTHLY_STARS_KEY: return 34;
             case OverlayManager.WINSTREAK_KEY:  return 24;
             case OverlayManager.URCHIN_KEY:     return 36;
             case OverlayManager.PING_KEY:       return 28;
@@ -99,6 +118,25 @@ public final class OverlayTheme {
             case OverlayManager.WLR_KEY:      return "wlr";
             case OverlayManager.BBLR_KEY:     return "bblr";
             case OverlayManager.KDR_KEY:      return "kdr";
+            case OverlayManager.KILLS_KEY:    return "kills";
+            case OverlayManager.FINALS_KEY:   return "finals";
+            case OverlayManager.BEDS_KEY:     return "beds";
+            case OverlayManager.WINS_KEY:     return "wins";
+            case OverlayManager.DAILY_FKDR_KEY: return "dfkdr";
+            case OverlayManager.DAILY_WLR_KEY: return "dwlr";
+            case OverlayManager.DAILY_STARS_KEY: return "dstar";
+            case OverlayManager.DAILY_BBLR_KEY: return "dbblr";
+            case OverlayManager.DAILY_KDR_KEY: return "dkdr";
+            case OverlayManager.WEEKLY_FKDR_KEY: return "wfkdr";
+            case OverlayManager.WEEKLY_WLR_KEY: return "wwlr";
+            case OverlayManager.WEEKLY_STARS_KEY: return "wstar";
+            case OverlayManager.WEEKLY_BBLR_KEY: return "wbblr";
+            case OverlayManager.WEEKLY_KDR_KEY: return "wkdr";
+            case OverlayManager.MONTHLY_FKDR_KEY: return "mfkdr";
+            case OverlayManager.MONTHLY_WLR_KEY: return "mwlr";
+            case OverlayManager.MONTHLY_STARS_KEY: return "mstar";
+            case OverlayManager.MONTHLY_BBLR_KEY: return "mbblr";
+            case OverlayManager.MONTHLY_KDR_KEY: return "mkdr";
             case OverlayManager.WINSTREAK_KEY:  return "ws";
             case OverlayManager.URCHIN_KEY:     return "tags";
             case OverlayManager.SESSION_KEY:    return "sess";
@@ -125,7 +163,28 @@ public final class OverlayTheme {
             case OverlayManager.WLR_KEY:
             case OverlayManager.BBLR_KEY:
             case OverlayManager.KDR_KEY:
+            case OverlayManager.DAILY_FKDR_KEY:
+            case OverlayManager.DAILY_WLR_KEY:
+            case OverlayManager.DAILY_BBLR_KEY:
+            case OverlayManager.DAILY_KDR_KEY:
+            case OverlayManager.WEEKLY_FKDR_KEY:
+            case OverlayManager.WEEKLY_WLR_KEY:
+            case OverlayManager.WEEKLY_BBLR_KEY:
+            case OverlayManager.WEEKLY_KDR_KEY:
+            case OverlayManager.MONTHLY_FKDR_KEY:
+            case OverlayManager.MONTHLY_WLR_KEY:
+            case OverlayManager.MONTHLY_BBLR_KEY:
+            case OverlayManager.MONTHLY_KDR_KEY:
                 return styleFkdr(text);
+            case OverlayManager.DAILY_STARS_KEY:
+            case OverlayManager.WEEKLY_STARS_KEY:
+            case OverlayManager.MONTHLY_STARS_KEY:
+                return plainGray(text);
+            case OverlayManager.KILLS_KEY:
+            case OverlayManager.FINALS_KEY:
+            case OverlayManager.BEDS_KEY:
+            case OverlayManager.WINS_KEY:
+                return plainGray(text);
             case OverlayManager.PING_KEY:
                 return stylePing(text);
             case OverlayManager.URCHIN_KEY:

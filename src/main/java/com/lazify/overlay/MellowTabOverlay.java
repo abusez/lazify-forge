@@ -72,6 +72,15 @@ public final class MellowTabOverlay {
         if (players.isEmpty()) return;
 
         Map<String, Map<String, Object>> stats = manager.getOverlayPlayersSnapshot();
+        if (LazifyConfig.INSTANCE.isStatFilter()) {
+            List<NetworkPlayerInfo> filtered = new ArrayList<>();
+            for (NetworkPlayerInfo info : players) {
+                String uuid = info.getGameProfile().getId().toString().replace("-", "");
+                if (manager.passesStatFilter(uuid, stats.get(uuid))) filtered.add(info);
+            }
+            players = filtered;
+            if (players.isEmpty()) return;
+        }
 
         List<Integer> columnWidths = computeColumnWidths(mc.fontRendererObj, manager, tabColumns, players, stats);
         int totalWidth = getTotalWidth(columnWidths);

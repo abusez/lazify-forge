@@ -247,4 +247,29 @@ public final class ThresholdColorScale {
         list.add(new Tier(6, 255, 85, 85));
         return new ThresholdColorScale(list);
     }
+
+    /** Lifetime kills / finals / beds / wins. */
+    public static ThresholdColorScale defaultCounts() {
+        List<Tier> list = new ArrayList<>();
+        list.add(new Tier(0, 170, 170, 170));
+        list.add(new Tier(500, 255, 255, 255));
+        list.add(new Tier(2000, 255, 255, 85));
+        list.add(new Tier(5000, 255, 170, 0));
+        list.add(new Tier(10000, 255, 85, 85));
+        list.add(new Tier(25000, 170, 0, 0));
+        list.add(new Tier(50000, 255, 85, 255));
+        return new ThresholdColorScale(list);
+    }
+
+    /** Daily / weekly / monthly stars gained. */
+    public static ThresholdColorScale defaultPeriodStars() {
+        List<Tier> list = new ArrayList<>();
+        list.add(new Tier(0, 170, 170, 170));
+        list.add(new Tier(1, 85, 255, 85));
+        list.add(new Tier(5, 255, 255, 85));
+        list.add(new Tier(10, 255, 170, 0));
+        list.add(new Tier(25, 255, 85, 85));
+        list.add(new Tier(50, 255, 85, 255));
+        return new ThresholdColorScale(list);
+    }
 }
