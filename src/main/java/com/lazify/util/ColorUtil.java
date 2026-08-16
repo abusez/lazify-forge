@@ -323,8 +323,8 @@ public class ColorUtil {
 
         String prefix = player.get("prefix", "");
         if (!prefix.isEmpty()) {
-            try { return strip(prefix.substring(4, prefix.length() - 1)); }
-            catch (Exception ignored) {}
+            String fromPrefix = com.lazify.api.PlayerStatsParser.rankFromPrefix(prefix);
+            if (!fromPrefix.isEmpty()) return fromPrefix;
         }
 
         String rank = player.get("rank", "");
@@ -355,12 +355,26 @@ public class ColorUtil {
             case "VIP": case "VIP+":             return "\u00a7a";
             case "MVP": case "MVP+":             return "\u00a7b";
             case "MVP++":                        return "\u00a76";
-            case "YOUTUBE": case "ADMIN":
-            case "OWNER":                        return "\u00a7c";
+            case "YOUTUBE": case "ADMIN": case "OWNER": case "STAFF":
+                                                 return "\u00a7c";
             case "GM":                           return "\u00a72";
-            case "PIG+++":                       return "\u00a7d";
+            case "MOD":                          return "\u00a72";
+            case "HELPER":                       return "\u00a79";
+            case "PIG+++": case "INNIT":         return "\u00a7d";
             default:                             return "\u00a77";
         }
+    }
+
+    /** Name color using the rank metadata retained by {@code PlayerStatsParser}. */
+    public static String getRankColor(String rank, String monthlyRankColor, String prefix) {
+        String coloredPrefix = colorize(prefix);
+        char prefixColor = firstColorCode(coloredPrefix, '\0');
+        if (prefixColor != '\0') return "\u00a7" + prefixColor;
+        if ("MVP++".equals(normalizeRank(rank)) && monthlyRankColor != null) {
+            if ("AQUA".equalsIgnoreCase(monthlyRankColor)) return "\u00a7b";
+            if ("GOLD".equalsIgnoreCase(monthlyRankColor)) return "\u00a76";
+        }
+        return getRankColor(rank);
     }
 
     /** Normalize API rank strings (e.g. "MVP_PLUS" → "MVP+", "SUPERSTAR" → "MVP++") */
@@ -372,9 +386,11 @@ public class ColorUtil {
             case "SUPERSTAR":   return "MVP++";
             case "GAME_MASTER": return "GM";
             case "YOUTUBER":    return "YOUTUBE";
+            case "MODERATOR":   return "MOD";
             // Already normalized forms pass through
             case "VIP": case "VIP+": case "MVP": case "MVP+": case "MVP++":
-            case "GM": case "YOUTUBE": case "ADMIN": case "OWNER": case "PIG+++":
+            case "GM": case "YOUTUBE": case "ADMIN": case "OWNER": case "STAFF":
+            case "PIG+++": case "INNIT": case "MOD": case "HELPER":
                 return rank;
             default: return rank;
         }
@@ -416,16 +432,33 @@ public class ColorUtil {
             case "YOUTUBE":return "\u00a7c[\u00a7fYOUTUBE\u00a7c]";
             case "ADMIN":  return "\u00a7c[ADMIN]";
             case "OWNER":  return "\u00a7c[OWNER]";
+            case "STAFF":  return "\u00a7c[STAFF]";
+            case "MOD":    return "\u00a72[MOD]";
+            case "HELPER": return "\u00a79[HELPER]";
             case "PIG+++": return "\u00a7d[PIG\u00a7b+++\u00a7d]";
+            case "INNIT":  return "\u00a7d[INNIT]";
             default:       return "\u00a77";
         }
     }
 
     /** Overlay rank column: [NICK] for nicked, [NON] for no rank, otherwise formatted Hypixel rank. */
     public static String formatRankColumn(boolean nicked, String apiRank) {
+        return formatRankColumn(nicked, apiRank, "RED", "");
+    }
+
+    public static String formatRankColumn(boolean nicked, String apiRank,
+                                          String plusColor, String prefix) {
+        return formatRankColumn(nicked, apiRank, plusColor, "GOLD", prefix);
+    }
+
+    public static String formatRankColumn(boolean nicked, String apiRank,
+                                          String plusColor, String monthlyRankColor, String prefix) {
         if (nicked) return "\u00a7e[NICK]";
-        String formatted = getFormattedRankFromStr(apiRank);
-        if (formatted.equals("\u00a77") || apiRank == null || apiRank.isEmpty() || "NORMAL".equalsIgnoreCase(apiRank)) {
+        String coloredPrefix = colorize(prefix);
+        String formatted = coloredPrefix.isEmpty()
+                ? getFormattedRankFromStr(apiRank, plusColor, monthlyRankColor) : coloredPrefix;
+        if (coloredPrefix.isEmpty() && (formatted.equals("\u00a77") || apiRank == null
+                || apiRank.isEmpty() || "NORMAL".equalsIgnoreCase(apiRank))) {
             return "\u00a77[NON]";
         }
         return formatted;
@@ -433,20 +466,67 @@ public class ColorUtil {
 
     /** Formatted rank display from a raw API rank string (no plus color info available) */
     public static String getFormattedRankFromStr(String apiRank) {
+        return getFormattedRankFromStr(apiRank, "RED");
+    }
+
+    /** Formatted rank display with the player's configured Hypixel plus color. */
+    public static String getFormattedRankFromStr(String apiRank, String plusColor) {
+        return getFormattedRankFromStr(apiRank, plusColor, "GOLD");
+    }
+
+    public static String getFormattedRankFromStr(String apiRank, String plusColor,
+                                                 String monthlyRankColor) {
         String rank = normalizeRank(apiRank);
         if (rank.isEmpty()) return "\u00a77";
+        String colorCode = colorNameCode(plusColor);
+        String monthlyColorCode = colorNameCode(monthlyRankColor);
         switch (rank) {
             case "VIP":    return "\u00a7a[VIP]";
             case "VIP+":   return "\u00a7a[VIP\u00a76+\u00a7a]";
             case "MVP":    return "\u00a7b[MVP]";
-            case "MVP+":   return "\u00a7b[MVP\u00a7c+\u00a7b]";
-            case "MVP++":  return "\u00a76[MVP\u00a7c++\u00a76]";
+            case "MVP+":   return "\u00a7b[MVP" + colorCode + "+\u00a7b]";
+            case "MVP++":  return monthlyColorCode + "[MVP" + colorCode + "++" + monthlyColorCode + "]";
             case "GM":     return "\u00a72[GM]";
             case "YOUTUBE":return "\u00a7c[\u00a7fYOUTUBE\u00a7c]";
             case "ADMIN":  return "\u00a7c[ADMIN]";
             case "OWNER":  return "\u00a7c[OWNER]";
+            case "STAFF":  return "\u00a7c[STAFF]";
+            case "MOD":    return "\u00a72[MOD]";
+            case "HELPER": return "\u00a79[HELPER]";
             case "PIG+++": return "\u00a7d[PIG\u00a7b+++\u00a7d]";
+            case "INNIT":  return "\u00a7d[INNIT]";
             default:       return "\u00a77";
+        }
+    }
+
+    /** Preserve an API custom prefix; otherwise format the normalized rank metadata. */
+    public static String getFormattedRankFromNetwork(com.lazify.api.JsonWrapper network) {
+        if (network == null || !network.exists()) return "\u00a77";
+        String prefix = colorize(network.get("prefix", ""));
+        if (!prefix.isEmpty()) return prefix;
+        return getFormattedRankFromStr(network.get("rank", ""),
+                network.get("rankPlusColor", "RED"), network.get("monthlyRankColor", "GOLD"));
+    }
+
+    private static String colorNameCode(String colorName) {
+        if (colorName == null) colorName = "RED";
+        switch (colorName.toUpperCase(java.util.Locale.ROOT)) {
+            case "BLACK":        return "\u00a70";
+            case "DARK_BLUE":    return "\u00a71";
+            case "DARK_GREEN":   return "\u00a72";
+            case "DARK_AQUA":    return "\u00a73";
+            case "DARK_RED":     return "\u00a74";
+            case "DARK_PURPLE":  return "\u00a75";
+            case "GOLD":         return "\u00a76";
+            case "GRAY":         return "\u00a77";
+            case "DARK_GRAY":    return "\u00a78";
+            case "BLUE":         return "\u00a79";
+            case "GREEN":        return "\u00a7a";
+            case "AQUA":         return "\u00a7b";
+            case "LIGHT_PURPLE": return "\u00a7d";
+            case "YELLOW":       return "\u00a7e";
+            case "WHITE":        return "\u00a7f";
+            default:             return "\u00a7c";
         }
     }
 

@@ -77,7 +77,7 @@ public final class StatsProvider {
         int hypixelCode = 0;
         boolean hypixelNick = true;
 
-        if (merged != null && prismUsed && PlayerStatsParser.needsRank(merged)) {
+        if (merged != null && PlayerStatsParser.needsRank(merged)) {
             Object[] bordicRes = NickDetector.fetchBordicCache(dashless, bordicKey);
             JsonWrapper bordicStats = tryParseStats((JsonWrapper) bordicRes[0], (int) bordicRes[1], "bordic");
             if (bordicStats != null) {
@@ -133,6 +133,68 @@ public final class StatsProvider {
         }
 
         return new Result(null, 502, null, false, nickDebug);
+    }
+
+    /**
+     * Lightweight rank-only lookup for Bordic-session lifetime path (no bedwars needed).
+     * Tries Abyss first (has {@code prefix}), then Bordic cache, then Hypixel when keyed.
+     * Prism is skipped (no rank).
+     */
+    public static String fetchRank(String uuid, String bordicKey, String hypixelKey) {
+        return fetchRankInfo(uuid, bordicKey, hypixelKey).rank;
+    }
+
+    public static final class RankInfo {
+        public final String rank;
+        public final String prefix;
+        public final String rankPlusColor;
+        public final String monthlyRankColor;
+
+        private RankInfo(String rank, String prefix, String rankPlusColor, String monthlyRankColor) {
+            this.rank = rank == null ? "" : rank;
+            this.prefix = prefix == null ? "" : prefix;
+            this.rankPlusColor = rankPlusColor == null ? "RED" : rankPlusColor;
+            this.monthlyRankColor = monthlyRankColor == null ? "GOLD" : monthlyRankColor;
+        }
+    }
+
+    public static RankInfo fetchRankInfo(String uuid, String bordicKey, String hypixelKey) {
+        String dashless = uuid == null ? "" : uuid.replace("-", "");
+        if (dashless.length() != 32) return emptyRankInfo();
+
+        Object[] abyssRes = HttpUtil.get(ABYSS_URL + dashless, TIMEOUT_MS, abyssHeaders());
+        RankInfo rank = rankFromBody((JsonWrapper) abyssRes[0], (int) abyssRes[1]);
+        if (!rank.rank.isEmpty()) return rank;
+
+        Object[] bordicRes = NickDetector.fetchBordicCache(dashless, bordicKey);
+        rank = rankFromBody((JsonWrapper) bordicRes[0], (int) bordicRes[1]);
+        if (!rank.rank.isEmpty()) return rank;
+
+        if (hypixelKey != null && !hypixelKey.isEmpty()) {
+            Object[] hypixelRes = HttpUtil.get(HYPIXEL_URL + dashless + "&key=" + hypixelKey, TIMEOUT_MS);
+            rank = rankFromBody((JsonWrapper) hypixelRes[0], (int) hypixelRes[1]);
+            if (!rank.rank.isEmpty()) return rank;
+        }
+        return emptyRankInfo();
+    }
+
+    /** @deprecated use {@link #fetchRank(String, String, String)} */
+    public static String fetchRank(String uuid, String bordicKey) {
+        return fetchRank(uuid, bordicKey, null);
+    }
+
+    private static RankInfo rankFromBody(JsonWrapper body, int code) {
+        if (code != 200 || body == null || !body.exists()) return emptyRankInfo();
+        if (!body.get("success").asBoolean(false)) return emptyRankInfo();
+        JsonWrapper player = body.object("player");
+        if (!player.exists()) return emptyRankInfo();
+        String rank = PlayerStatsParser.resolveApiRank(player);
+        return new RankInfo(rank, player.get("prefix", ""),
+                player.get("rankPlusColor", "RED"), player.get("monthlyRankColor", "GOLD"));
+    }
+
+    private static RankInfo emptyRankInfo() {
+        return new RankInfo("", "", "RED", "GOLD");
     }
 
     private static Map<String, String> abyssHeaders() {

@@ -40,12 +40,25 @@ public final class BordicSuperstar {
     public static final class MatchResult {
         public final Entry entry;
         public final long score;
+        /** Candidates matching filters with finals+beds both within {@link #NEARBY_STAT_RADIUS}. */
+        public final int nearbyCount;
 
-        MatchResult(Entry entry, long score) {
+        MatchResult(Entry entry, long score, int nearbyCount) {
             this.entry = entry;
             this.score = score;
+            this.nearbyCount = nearbyCount;
+        }
+
+        /** Too many people near the observed finals/beds — chat denick would be unreliable. */
+        public boolean isAmbiguous() {
+            return nearbyCount >= AMBIGUOUS_NEARBY_MIN;
         }
     }
+
+    /** Max |Δfinals| and |Δbeds| to count as "nearby" for ambiguity. */
+    public static final int NEARBY_STAT_RADIUS = 200;
+    /** If this many nearby candidates, suppress chat denick. */
+    public static final int AMBIGUOUS_NEARBY_MIN = 7;
 
     private static List<Entry> cache = Collections.emptyList();
     private static long cacheTime = 0L;
@@ -129,18 +142,25 @@ public final class BordicSuperstar {
 
         Entry best = null;
         long bestScore = Long.MAX_VALUE;
+        int nearbyCount = 0;
         for (Entry e : list) {
             if (e.killMessage == null || e.killMessage.isEmpty()) continue;
             if (!killMsgs.contains(e.killMessage)) continue;
             if (!woodTypeMatches(woodType, e.activeWoodType)) continue;
             if (star != null && star > 0 && e.star != star) continue;
-            long score = Math.abs((long) e.finals - finals) + Math.abs((long) e.beds - beds);
+
+            long dFinals = Math.abs((long) e.finals - finals);
+            long dBeds = Math.abs((long) e.beds - beds);
+            if (dFinals <= NEARBY_STAT_RADIUS && dBeds <= NEARBY_STAT_RADIUS) {
+                nearbyCount++;
+            }
+            long score = dFinals + dBeds;
             if (score < bestScore) {
                 bestScore = score;
                 best = e;
             }
         }
-        return best != null ? new MatchResult(best, bestScore) : null;
+        return best != null ? new MatchResult(best, bestScore, nearbyCount) : null;
     }
 
     /** Skip only when both sides have a concrete wood id and they disagree. */

@@ -629,7 +629,7 @@ public class GuiClickMenu extends GuiScreen {
                 break;
             }
             case 1: { // Features
-                entries.add(new BoolEntry("Skin Denick", "Detect nicks by skin", c::isSkinDenick, c::setSkinDenick));
+                entries.add(new BoolEntry("Denick", "Tab / skin / Bordic-stat nick denicking", c::isDenick, c::setDenick));
                 entries.add(new BoolEntry("Middle Click Shop", "Auto middle-click in BW shop", c::isMiddleClickShop, c::setMiddleClickShop));
                 Entry autoWho = new BoolEntry("Auto /who", "Auto send /who on game start", c::isAutoWho, c::setAutoWho);
                 autoWho.addChild(new DblEntry("Delay", "Seconds before sending /who", c::getWhoDelay, c::setWhoDelay, 0.0, 10.0, 0.5));

@@ -188,7 +188,7 @@ public final class OverlayTheme {
             case OverlayManager.PING_KEY:
                 return stylePing(text);
             case OverlayManager.URCHIN_KEY:
-                return styleTag(text);
+                return text;
             case OverlayManager.WINSTREAK_KEY:
             case OverlayManager.SESSION_KEY:
             case OverlayManager.LEVEL_KEY:
@@ -201,21 +201,16 @@ public final class OverlayTheme {
     }
 
     private static String stylePlayer(String uuid, String text, Map<String, Object> ps) {
-        if (LazifyConfig.INSTANCE.isShowRanks() && text != null && !text.isEmpty()) {
-            String rankPre = rankPrefixFor(ps);
-            if (rankPre.isEmpty()) {
-                String plain = ColorUtil.strip(text);
-                if (plain.startsWith("[") && plain.contains("]")) {
-                    return text;
-                }
-            }
-        }
-
         String stripped = ColorUtil.strip(text);
         boolean nicked = ps != null && Boolean.TRUE.equals(ps.get("nicked"));
         boolean showTeams = OverlayManager.INSTANCE.showTeamColors;
         boolean showPrefix = OverlayManager.INSTANCE.showTeamPrefix;
         String rankPre = rankPrefixFor(ps);
+        if (rankPre.isEmpty() && LazifyConfig.INSTANCE.isShowRanks()
+                && stripped.startsWith("[") && stripped.contains("]")) {
+            int rawEnd = text.indexOf(']');
+            if (rawEnd >= 0) rankPre = text.substring(0, rawEnd + 1);
+        }
 
         if (stripped.contains(" > ")) {
             int idx = stripped.indexOf(" > ");
@@ -319,18 +314,6 @@ public final class OverlayTheme {
         return ColorUtil.strip(styled);
     }
 
-    private static String styleTag(String text) {
-        String plain = ColorUtil.strip(text);
-        if (plain.isEmpty()) return GRAY + "-";
-        StringBuilder out = new StringBuilder();
-        for (int i = 0; i < plain.length(); i++) {
-            char c = plain.charAt(i);
-            if (c == '+') out.append(GRAY).append('+');
-            else out.append(RED).append(c);
-        }
-        return out.toString();
-    }
-
     private static String styleStar(String text) {
         String num = ColorUtil.strip(text).replaceAll("[^0-9]", "");
         if (num.isEmpty()) return "\u00a7f" + ColorUtil.strip(text);
@@ -357,11 +340,13 @@ public final class OverlayTheme {
     private static String stylePing(String text) {
         String stripped = ColorUtil.strip(text);
         if (stripped.equals("-")) return GRAY + "-";
+        String numeric = stripped.toLowerCase(Locale.ROOT).endsWith("ms")
+                ? stripped.substring(0, stripped.length() - 2) : stripped;
         try {
-            int ping = Integer.parseInt(stripped);
-            if (ping >= 200) return RED + ping;
-            if (ping >= 150) return GOLD + ping;
-            return GREEN + ping;
+            int ping = Integer.parseInt(numeric);
+            if (ping >= 200) return RED + stripped;
+            if (ping >= 150) return GOLD + stripped;
+            return GREEN + stripped;
         } catch (NumberFormatException e) {
             return GRAY + stripped;
         }

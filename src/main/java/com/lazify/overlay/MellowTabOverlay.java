@@ -277,7 +277,7 @@ public final class MellowTabOverlay {
             String value = fitToWidth(fr,
                     manager.resolveMellowTabCell(info, ps, uuid, colKey), maxTextWidth);
             if (value != null && !value.isEmpty()) {
-                int cellColor = manager.mellowCellColor(colKey, ps);
+                int cellColor = manager.mellowCellColor(colKey, ps, info, value);
                 if (cellColor != -1) value = ColorUtil.strip(value);
                 int drawX;
                 if (OverlayManager.isMellowTabRightAligned(colKey)) {
@@ -357,7 +357,7 @@ public final class MellowTabOverlay {
     private static String fitToWidth(FontRenderer fr, String value, int width) {
         if (value == null || value.isEmpty()) return "";
         if (fr.getStringWidth(value) <= width) return value;
-        String suffix = "\u00a77...";
+        String suffix = "...";
         int suffixWidth = fr.getStringWidth(suffix);
         String trimmed = fr.trimStringToWidth(value, Math.max(0, width - suffixWidth));
         return trimmed == null || trimmed.isEmpty() ? "" : trimmed + suffix;

@@ -48,7 +48,7 @@ public class LazifyConfig {
     private boolean autoTablist            = true;
     private boolean clearOnWho             = false;
     private boolean middleClickShop        = false;
-    private boolean skinDenick             = true;
+    private boolean denick                   = true;
     private boolean fkdrColors             = true;
     private boolean autoWho                = false;
     private double  whoDelay               = 0.0;
@@ -299,7 +299,7 @@ public class LazifyConfig {
         seraphKey = p.getString();
 
         p = config.get("api", "bordicKey", "");
-        p.comment = "Your Bordic API key from bordic.xyz. Enables session period columns and MVP++ superstar nick denicking.";
+        p.comment = "Your Bordic API key from bordic.xyz. Enables session period columns and MVP++ stat nick denicking.";
         bordicKey = p.getString();
 
         p = config.get("api", "hypixelKey", "");
@@ -353,9 +353,15 @@ public class LazifyConfig {
         p.comment = "Clear the overlay when a /who response is received, then re-add players from the response.";
         clearOnWho = p.getBoolean(false);
 
-        p = config.get("general", "skinDenick", true);
-        p.comment = "Detect nicked players by matching their skin against known Hypixel nick skins.";
-        skinDenick = p.getBoolean(true);
+        // Migrate skinDenick → denick (master toggle for tab/skin/stat denick)
+        boolean denickDefault = true;
+        ConfigCategory genCat = config.getCategory("general");
+        if (!genCat.containsKey("denick") && genCat.containsKey("skinDenick")) {
+            denickDefault = genCat.get("skinDenick").getBoolean(true);
+        }
+        p = config.get("general", "denick", denickDefault);
+        p.comment = "Master toggle for nick denicking (tab leak, skin match, and Bordic stat fingerprint).";
+        denick = p.getBoolean(denickDefault);
 
         p = config.get("general", "removeFinalKill", false);
         p.comment = "Automatically remove a player from the overlay when they get final killed.";
@@ -991,7 +997,7 @@ public class LazifyConfig {
         String[] staleGeneral = {
             "addTaggedToEnemy", "useprism", "autoRequeue", "statsDisplayMode",
             "anticheatEnabled", "acScaffold", "acEagle", "acAutoBlock", "acNoSlow",
-            "acVerbose", "acVl", "acCooldown"
+            "acVerbose", "acVl", "acCooldown", "skinDenick"
         };
         for (String key : staleGeneral) {
             if (config.getCategory("general").containsKey(key))
@@ -1028,7 +1034,7 @@ public class LazifyConfig {
         gen.get("autoTablist").set(autoTablist);
         gen.get("clearOnWho").set(clearOnWho);
         gen.get("middleClickShop").set(middleClickShop);
-        gen.get("skinDenick").set(skinDenick);
+        gen.get("denick").set(denick);
         gen.get("fkdrColors").set(fkdrColors);
         gen.get("autoWho").set(autoWho);
         gen.get("whoDelay").set(whoDelay);
@@ -1215,7 +1221,9 @@ public class LazifyConfig {
     public boolean isAutoTablist()             { return autoTablist; }
     public boolean isClearOnWho()              { return clearOnWho; }
     public boolean isMiddleClickShop()         { return middleClickShop; }
-    public boolean isSkinDenick()              { return skinDenick; }
+    public boolean isDenick()                  { return denick; }
+    /** @deprecated use {@link #isDenick()} */
+    public boolean isSkinDenick()              { return denick; }
     public boolean isFkdrColors()              { return fkdrColors; }
     public boolean isAutoWho()                 { return autoWho; }
     public double  getWhoDelay()               { return whoDelay; }
@@ -1583,7 +1591,9 @@ public class LazifyConfig {
     public void setAutoTablist(boolean v)          { autoTablist = v; }
     public void setClearOnWho(boolean v)           { clearOnWho = v; }
     public void setMiddleClickShop(boolean v)      { middleClickShop = v; }
-    public void setSkinDenick(boolean v)           { skinDenick = v; }
+    public void setDenick(boolean v)               { denick = v; }
+    /** @deprecated use {@link #setDenick(boolean)} */
+    public void setSkinDenick(boolean v)           { denick = v; }
     public void setFkdrColors(boolean v)          { fkdrColors = v; }
     public void setAutoWho(boolean v)             { autoWho = v; }
     public void setWhoDelay(double v)             { whoDelay = v; }
@@ -1674,7 +1684,12 @@ public class LazifyConfig {
         int[] rgb = unpackHueToRgb(v);
         setAllHeaderColors(rgb[0], rgb[1], rgb[2]);
     }
-    public void setBorderHue(int v)                { borderHue = v; }
+    /** Legacy: converts hue into outline RGB. */
+    public void setBorderHue(int v) {
+        borderHue = v;
+        int[] rgb = unpackHueToRgb(v);
+        outlineR = rgb[0]; outlineG = rgb[1]; outlineB = rgb[2];
+    }
     public void setOutlineEnabled(boolean v)       { outlineEnabled = v; }
     public void setOutlineChroma(boolean v)        { outlineChroma = v; }
     public void setOutlineR(int v)                 { outlineR = clamp(v, 0, 255); }
@@ -1822,6 +1837,8 @@ public class LazifyConfig {
         mellowHeaderR = 255; mellowHeaderG = 255; mellowHeaderB = 255; mellowHeaderA = 32;
         mellowRowR = 255; mellowRowG = 255; mellowRowB = 255; mellowRowA = 32;
         mellowTaggedR = 0; mellowTaggedG = 0; mellowTaggedB = 0; mellowTaggedA = 153;
+        fkdrColor1 = "7"; fkdrColor2 = "f"; fkdrColor3 = "e"; fkdrColor4 = "6";
+        fkdrColor5 = "c"; fkdrColor6 = "4"; fkdrColor7 = "5";
         fkdrScale = ThresholdColorScale.defaultFkdr();
         wsScale = ThresholdColorScale.defaultWinstreak();
         pingScale = ThresholdColorScale.defaultPing();

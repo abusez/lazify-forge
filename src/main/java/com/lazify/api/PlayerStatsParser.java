@@ -49,6 +49,8 @@ public final class PlayerStatsParser {
         network.addProperty("exp", 0);
         network.addProperty("rank", "");
         network.addProperty("prefix", "");
+        network.addProperty("rankPlusColor", "RED");
+        network.addProperty("monthlyRankColor", "GOLD");
         network.addProperty("language", "ENGLISH");
         root.add("network", network);
         root.add("bedwars", buildBedwars(bedwarsRaw, new JsonWrapper(null)));
@@ -89,6 +91,9 @@ public final class PlayerStatsParser {
         String secondaryRank = secondary.get("rank", "");
         if (isEmptyRank(primaryRank) && !isEmptyRank(secondaryRank)) {
             network.addProperty("rank", secondaryRank);
+            network.addProperty("prefix", secondary.get("prefix", ""));
+            network.addProperty("rankPlusColor", secondary.get("rankPlusColor", "RED"));
+            network.addProperty("monthlyRankColor", secondary.get("monthlyRankColor", "GOLD"));
         }
     }
 
@@ -135,6 +140,8 @@ public final class PlayerStatsParser {
         network.addProperty("achievement_points", num(player, "achievementPoints"));
         network.addProperty("rank", rank);
         network.addProperty("prefix", player.get("prefix", ""));
+        network.addProperty("rankPlusColor", player.get("rankPlusColor", "RED"));
+        network.addProperty("monthlyRankColor", player.get("monthlyRankColor", "GOLD"));
         network.addProperty("first_login", num(player, "firstLogin"));
         network.addProperty("last_login", num(player, "lastLogin"));
         network.addProperty("last_logout", num(player, "lastLogout"));
@@ -143,26 +150,55 @@ public final class PlayerStatsParser {
         return network;
     }
 
-    /** Rank string for {@code formatRankColumn}; prefers paid ranks over staff {@code rank}. */
-    private static String resolveApiRank(JsonWrapper player) {
+    /** Rank string for {@code formatRankColumn}. Matches Hypixel display priority. */
+    public static String resolveApiRank(JsonWrapper player) {
+        if (player == null || !player.exists()) return "";
+
+        // 1) Custom prefix wins (PIG+++, INNIT, special staff tags, …)
+        String fromPrefix = rankFromPrefix(player.get("prefix", ""));
+        if (!fromPrefix.isEmpty()) return fromPrefix;
+
+        // 2) Staff / special rank field (YOUTUBER, ADMIN, OWNER, STAFF, GM, …)
+        String staffRank = player.get("rank", "");
+        if (!isEmptyRank(staffRank)) return staffRank;
+
+        // 3) MVP++ monthly
+        String monthlyRank = player.get("monthlyPackageRank", "");
+        if (!monthlyRank.isEmpty() && !"NONE".equalsIgnoreCase(monthlyRank)) {
+            return monthlyRank;
+        }
+
+        // 4) Paid package rank
         String rank = player.get("newPackageRank", "");
-        if (rank.isEmpty() || "NONE".equals(rank)) {
+        if (rank.isEmpty() || "NONE".equalsIgnoreCase(rank)) {
             rank = player.get("packageRank", "");
         }
-        if ("NONE".equals(rank)) rank = "";
-
-        String monthlyRank = player.get("monthlyPackageRank", "");
-        if (!monthlyRank.isEmpty() && !"NONE".equals(monthlyRank)) {
-            rank = monthlyRank;
-        }
-
-        if (isEmptyRank(rank)) {
-            String staffRank = player.get("rank", "");
-            if (!staffRank.isEmpty() && !"NORMAL".equalsIgnoreCase(staffRank)) {
-                rank = staffRank;
-            }
-        }
+        if ("NONE".equalsIgnoreCase(rank)) rank = "";
         return rank == null ? "" : rank;
+    }
+
+    /** Extract plain rank tag from a Hypixel {@code prefix} like {@code §d[PIG§b+++§d]}. */
+    public static String rankFromPrefix(String prefix) {
+        if (prefix == null || prefix.isEmpty()) return "";
+        String plain = stripMcColor(prefix).trim();
+        if (plain.startsWith("[") && plain.endsWith("]") && plain.length() > 2) {
+            return plain.substring(1, plain.length() - 1).trim();
+        }
+        return plain;
+    }
+
+    private static String stripMcColor(String s) {
+        if (s == null || s.isEmpty()) return "";
+        StringBuilder out = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\u00a7' && i + 1 < s.length()) {
+                i++;
+                continue;
+            }
+            out.append(c);
+        }
+        return out.toString();
     }
 
     private static boolean isEmptyRank(String rank) {

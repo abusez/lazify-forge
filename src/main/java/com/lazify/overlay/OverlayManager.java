@@ -14,6 +14,7 @@ import com.lazify.util.TagInfo;
 import com.lazify.util.KillMessageDetector;
 import com.lazify.util.SkinDenick;
 import com.lazify.util.StarChatDetector;
+import com.lazify.util.ThresholdColorScale;
 import com.lazify.util.WoodSkinUtil;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.client.Minecraft;
@@ -162,7 +163,7 @@ public class OverlayManager {
     List<String>          tags           = new ArrayList<>();
 
     // ── Visibility ─────────────────────────────────────────────────────────────
-    boolean visible = true;
+    boolean visible = false;
 
     public void toggleVisible()       { visible = !visible; }
     public void setVisible(boolean v) { visible = v; }
@@ -346,7 +347,7 @@ public class OverlayManager {
         else if (seraphKey().isEmpty())
             print(PREFIX + "\u00a7eNo Seraph API key set. Use \u00a73/ov key seraph <key>\u00a7e for Seraph tags.");
         if (bordicKey().isEmpty())
-            print(PREFIX + "\u00a7eNo Bordic API key set. Use \u00a73/ov key bordic <key>\u00a7e for session columns / superstar denick.");
+            print(PREFIX + "\u00a7eNo Bordic API key set. Use \u00a73/ov key bordic <key>\u00a7e for session columns / stat denick.");
         if (hypixelKey().isEmpty())
             print(PREFIX + "\u00a7eNo Hypixel API key set. Stats use Abyss/Prism only. \u00a73/ov key hypixel <key>\u00a7e for fallback.");
     }
@@ -653,14 +654,16 @@ public class OverlayManager {
                 debug("Nick detected: " + username + " uuid=" + uuid);
                 placeholder.put("nicked", true);
                 placeholder.put("apinicked", "\u00a7eN");
-                placeholder.put(URCHIN_KEY, "\u00a7bN");
+                placeholder.put(URCHIN_KEY, "\u00a7eN");
                 placeholder.put(RANK_KEY, ColorUtil.formatRankColumn(true, ""));
                 uuidToName.put(uuid, username);
+
+                boolean denickEnabled = LazifyConfig.INSTANCE.isDenick();
 
                 // Check if this nick appears twice in tab list (Hypixel leaks the real UUID)
                 List<String> sameNameUuids = nameToUuids.get(username.toLowerCase());
                 String leakedUuid = null;
-                if (sameNameUuids != null && sameNameUuids.size() > 1) {
+                if (denickEnabled && sameNameUuids != null && sameNameUuids.size() > 1) {
                     for (String u : sameNameUuids) {
                         if (isV4UndashedUuid(u) && !u.equals(uuid)) {
                             leakedUuid = u; break;
@@ -687,7 +690,7 @@ public class OverlayManager {
                     }).start();
                 } else {
                     // Skin denick: match skin texture against known players
-                    String realName = LazifyConfig.INSTANCE.isSkinDenick() ? SkinDenick.getRealName(pla) : null;
+                    String realName = denickEnabled ? SkinDenick.getRealName(pla) : null;
                     if (realName != null && !realName.isEmpty()) {
                         debug("Skin denick: " + username + " -> " + realName);
                         placeholder.put(PLAYER_KEY, "\u00a7e" + username + " \u00a7d> \u00a7a" + realName);
@@ -1020,26 +1023,31 @@ public class OverlayManager {
      * Applied at draw time so config changes update immediately.
      */
     Integer liveStatRgb(String colKey, Map<String, Object> ps) {
+        return liveStatRgb(colKey, ps, null);
+    }
+
+    private Integer liveStatRgb(String colKey, Map<String, Object> ps, String displayText) {
         if (ps == null || colKey == null) return null;
+        if (isUnavailableStatText(displayText)) return null;
         LazifyConfig cfg = LazifyConfig.INSTANCE;
         try {
             switch (colKey) {
                 case FKDR_KEY:
-                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    if (!cfg.isFkdrColors()) return disabledStatColor();
                     return cfg.getFkdrScale().colorFor(getDoubleStat(ps, FKDR_VALUE));
                 case WLR_KEY:
-                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    if (!cfg.isFkdrColors()) return disabledStatColor();
                     return cfg.getFkdrScale().colorFor(statOrParse(ps, WLR_VALUE, WLR_KEY));
                 case BBLR_KEY:
-                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    if (!cfg.isFkdrColors()) return disabledStatColor();
                     return cfg.getFkdrScale().colorFor(statOrParse(ps, BBLR_VALUE, BBLR_KEY));
                 case KDR_KEY:
-                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    if (!cfg.isFkdrColors()) return disabledStatColor();
                     return cfg.getFkdrScale().colorFor(statOrParse(ps, KDR_VALUE, KDR_KEY));
                 case DAILY_FKDR_KEY:
                 case WEEKLY_FKDR_KEY:
                 case MONTHLY_FKDR_KEY:
-                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    if (!cfg.isFkdrColors()) return disabledStatColor();
                     return cfg.getFkdrScale().colorFor(statOrParse(ps, periodValueKey(colKey), colKey));
                 case DAILY_WLR_KEY:
                 case WEEKLY_WLR_KEY:
@@ -1050,35 +1058,35 @@ public class OverlayManager {
                 case DAILY_KDR_KEY:
                 case WEEKLY_KDR_KEY:
                 case MONTHLY_KDR_KEY:
-                    if (!cfg.isFkdrColors()) return 0xFFFFFFFF;
+                    if (!cfg.isFkdrColors()) return disabledStatColor();
                     return cfg.getFkdrScale().colorFor(statOrParse(ps, periodValueKey(colKey), colKey));
                 case DAILY_STARS_KEY:
                 case WEEKLY_STARS_KEY:
                 case MONTHLY_STARS_KEY:
-                    if (!cfg.isPeriodStarsColors()) return 0xFFFFFFFF;
+                    if (!cfg.isPeriodStarsColors()) return disabledStatColor();
                     return cfg.getPeriodStarsScale().colorFor(statOrParse(ps, periodValueKey(colKey), colKey));
                 case KILLS_KEY:
                 case FINALS_KEY:
                 case BEDS_KEY:
                 case WINS_KEY: {
-                    if (!cfg.isCountColors()) return 0xFFFFFFFF;
+                    if (!cfg.isCountColors()) return disabledStatColor();
                     String valueKey = KILLS_KEY.equals(colKey) ? KILLS_VALUE
                             : FINALS_KEY.equals(colKey) ? FINALS_VALUE
                             : BEDS_KEY.equals(colKey) ? BEDS_VALUE : WINS_VALUE;
                     return cfg.getCountsScale().colorFor(statOrParse(ps, valueKey, colKey));
                 }
                 case WINSTREAK_KEY:
-                    if (!cfg.isWsColors()) return 0xFFFFFFFF;
+                    if (!cfg.isWsColors()) return disabledStatColor();
                     double ws = getDoubleStat(ps, WINSTREAK_VALUE);
                     if (ws <= 0) return null;
                     return cfg.getWsScale().colorFor(ws);
                 case PING_KEY:
-                    if (!cfg.isPingColors()) return 0xFFFFFFFF;
+                    if (!cfg.isPingColors()) return disabledStatColor();
                     double ping = statOrParse(ps, PING_VALUE, PING_KEY);
                     if (ping <= 0) return 0xFFAAAAAA;
                     return cfg.getPingScale().colorFor(ping);
                 case SESSION_KEY: {
-                    if (!cfg.isSessionColors()) return 0xFFFFFFFF;
+                    if (!cfg.isSessionColors()) return disabledStatColor();
                     Object raw = ps.get(SESSION_KEY);
                     if (raw == null) return null;
                     String s = ColorUtil.strip(raw.toString());
@@ -1088,7 +1096,7 @@ public class OverlayManager {
                     return cfg.getSessionScale().colorFor(mins);
                 }
                 case ENCOUNTERS_KEY:
-                    if (!cfg.isEncountersColors()) return 0xFFFFFFFF;
+                    if (!cfg.isEncountersColors()) return disabledStatColor();
                     return cfg.getEncountersScale().colorFor(getDoubleStat(ps, ENCOUNTERS_VALUE));
                 default:
                     return null;
@@ -1096,6 +1104,17 @@ public class OverlayManager {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private Integer disabledStatColor() {
+        return 0xFFFFFFFF;
+    }
+
+    private static boolean isUnavailableStatText(String text) {
+        if (text == null) return false;
+        String plain = ColorUtil.strip(text).trim();
+        return plain.isEmpty() || "-".equals(plain) || "\u2014".equals(plain)
+                || "E".equalsIgnoreCase(plain) || "NICK".equalsIgnoreCase(plain);
     }
 
     private double statOrParse(Map<String, Object> ps, String valueKey, String displayKey) {
@@ -1109,9 +1128,20 @@ public class OverlayManager {
         }
     }
 
-    /** RGB for Mellow tab cell draw (same scales as HUD). */
-    public int mellowCellColor(String colKey, Map<String, Object> ps) {
-        Integer rgb = liveStatRgb(colKey, ps);
+    /** RGB for Mellow tab cell draw (same scales as HUD, with tab-list fallbacks). */
+    public int mellowCellColor(String colKey, Map<String, Object> ps,
+                               NetworkPlayerInfo info, String displayText) {
+        LazifyConfig cfg = LazifyConfig.INSTANCE;
+        if (PING_KEY.equals(colKey) && info != null
+                && (ps == null || (!ps.containsKey(PING_VALUE) && !ps.containsKey(PING_KEY)))) {
+            int ping = info.getResponseTime();
+            if (ping <= 0 || isUnavailableStatText(displayText)) return -1;
+            return cfg.isPingColors() ? cfg.getPingScale().colorFor(ping) : 0xFFFFFFFF;
+        }
+        if (ENCOUNTERS_KEY.equals(colKey) && ps == null) {
+            return cfg.isEncountersColors() ? cfg.getEncountersScale().colorFor(1) : 0xFFFFFFFF;
+        }
+        Integer rgb = liveStatRgb(colKey, ps, displayText);
         return rgb != null ? rgb : -1;
     }
 
@@ -1125,6 +1155,10 @@ public class OverlayManager {
         boolean unresolvedNick = nicked && !denicked;
         boolean isError = ps != null && Boolean.TRUE.equals(ps.get("error"));
         boolean hasTeam = teams.containsKey(uuid);
+        if (isError && !PLAYER_KEY.equals(colKey)
+                && isUnavailableStatText(stringVal(ps.get(colKey)))) {
+            return "\u00a74E";
+        }
 
         switch (colKey) {
             case PLAYER_KEY:
@@ -2554,6 +2588,15 @@ public class OverlayManager {
     /** After denick, fetch real stats/tags for the nick row on the overlay. */
     private void applyDenick(String nickUuid, String realUuid, String nickName, String realName,
                              String lobby, String chatSuffix) {
+        applyDenick(nickUuid, realUuid, nickName, realName, lobby, chatSuffix, true, false);
+    }
+
+    /**
+     * @param announce whether to print a chat line when {@code sendNickedToChat} allows it
+     * @param couldBe  if true, use {@code could be} wording (stat denick); else {@code is nicked >}
+     */
+    private void applyDenick(String nickUuid, String realUuid, String nickName, String realName,
+                             String lobby, String chatSuffix, boolean announce, boolean couldBe) {
         if (realUuid != null && !realUuid.isEmpty()) {
             realUuid = realUuid.replace("-", "");
         }
@@ -2597,9 +2640,13 @@ public class OverlayManager {
             addToOverlay(nickUuid, keep);
         }
 
-        if (LazifyConfig.INSTANCE.isSendNickedToChat() && shouldAnnounceInChat()) {
+        if (announce && LazifyConfig.INSTANCE.isSendNickedToChat() && shouldAnnounceInChat()) {
             String suffix = chatSuffix == null ? "" : " \u00a77(" + chatSuffix + ")";
-            printFromThread(PREFIX + "\u00a7e" + nickName + " \u00a7dis nicked \u00a7d> \u00a7a" + realName + suffix);
+            if (couldBe) {
+                printFromThread(PREFIX + "\u00a7e" + nickName + " \u00a7ecould be \u00a7a" + realName + suffix);
+            } else {
+                printFromThread(PREFIX + "\u00a7e" + nickName + " \u00a7dis nicked \u00a7d> \u00a7a" + realName + suffix);
+            }
         }
     }
 
@@ -2847,7 +2894,8 @@ public class OverlayManager {
                                     ps.get(URCHIN_KEY) != null ? ps.get(URCHIN_KEY).toString() : null);
                         }
                         // Keep colored nick > real name (do not strip)
-                    } else if (isError && (statValue == null || stringVal.isEmpty())) {
+                    } else if (isError && (statValue == null
+                            || isUnavailableStatText(statValue.toString()))) {
                         statValue = "\u00a74E";
                     }
 
@@ -2856,7 +2904,8 @@ public class OverlayManager {
                             if (isNicked && !isDenicked && !teams.containsKey(uuid)) {
                                 statValue = "\u00a7e" + stringVal.replaceAll("\u00a7.", "");
                             }
-                            if (isError && (statValue == null || stringVal.isEmpty() || stringVal.equals("\u00a77-"))) {
+                            if (isError && (statValue == null
+                                    || isUnavailableStatText(statValue.toString()))) {
                                 statValue = "\u00a74E";
                             }
                             if (statValue == null || stringVal.isEmpty()) {
@@ -2885,18 +2934,15 @@ public class OverlayManager {
                         text = OverlayTheme.styleCell(key, text, ps, uuid);
                     }
                     int drawColor = -1;
-                    Integer liveRgb = liveStatRgb(key, ps);
+                    Integer liveRgb = liveStatRgb(key, ps, text);
                     if (liveRgb != null) {
                         text = ColorUtil.strip(text);
                         drawColor = liveRgb;
                     }
                     int    tw   = OverlayRenderer.getFontWidth(text);
                     if (key.equals(PLAYER_KEY)) {
-                        tw = OverlayRenderer.getFontWidth(ColorUtil.strip(text));
-                        while (tw > maxWidth && text.length() > 1) {
-                            text = text.substring(0, text.length() - 1);
-                            tw = OverlayRenderer.getFontWidth(ColorUtil.strip(text));
-                        }
+                        text = OverlayRenderer.trimStringToWidth(text, maxWidth);
+                        tw = OverlayRenderer.getFontWidth(text);
                     }
                     if (!nerdify && !key.equals(PLAYER_KEY) && !key.equals(RANK_KEY)) {
                         x += (maxWidth - OverlayRenderer.getFontWidth(text)) / 2;
@@ -3074,7 +3120,7 @@ public class OverlayManager {
                     if (isNickedKey(fu)) {
                         keepData.put("nicked", true);
                         keepData.put("apinicked", "\u00a7eN");
-                        keepData.put(URCHIN_KEY, "\u00a7bN");
+                        keepData.put(URCHIN_KEY, "\u00a7eN");
                         keepData.put(RANK_KEY, ColorUtil.formatRankColumn(true, ""));
                     }
                     addToOverlay(fu, keepData);
@@ -3277,7 +3323,7 @@ public class OverlayManager {
                         Map<String, Object> nickData = new ConcurrentHashMap<>();
                         nickData.put("nicked", true);
                         nickData.put("apinicked", "\u00a7eN");
-                        nickData.put(URCHIN_KEY, "\u00a7bN");
+                        nickData.put(URCHIN_KEY, "\u00a7eN");
                         nickData.put(RANK_KEY, ColorUtil.formatRankColumn(true, ""));
                         if (markPregameKeep) nickData.put(PREGAME_KEEP_KEY, true);
                         addToOverlay(fu, nickData);
@@ -3345,7 +3391,7 @@ public class OverlayManager {
         debug("Nick killmsg: " + km.killer + " pkg=" + km.packageId
                 + " finals=" + km.observedFinals + " beds=" + km.observedBeds);
 
-        trySuperstarDenick(uuid, km.killer, currentLobby);
+        tryStatDenick(uuid, km.killer, currentLobby);
     }
 
     private void recordNickStarFromLine(String strippedChat) {
@@ -3382,7 +3428,7 @@ public class OverlayManager {
         data.put(NICK_STAR_KEY, star);
         addToOverlay(uuid, data);
         debug("Nick star: " + username + " star=" + star);
-        trySuperstarDenick(uuid, username, currentLobby);
+        tryStatDenick(uuid, username, currentLobby);
     }
 
     /** Called from BlockEvent.PlaceEvent when available (local placement). */
@@ -3445,7 +3491,7 @@ public class OverlayManager {
         data.put(NICK_WOOD_KEY, woodId);
         addToOverlay(uuid, data);
         debug("Nick wood stored: " + name + " wood=" + woodId);
-        trySuperstarDenick(uuid, name, currentLobby);
+        tryStatDenick(uuid, name, currentLobby);
     }
 
     private boolean isNickedPlayer(String uuid) {
@@ -3454,12 +3500,13 @@ public class OverlayManager {
         return data != null && Boolean.TRUE.equals(data.get("nicked"));
     }
 
-    private void trySuperstarDenick(String nickUuid, String nickName, String lobby) {
+    private void tryStatDenick(String nickUuid, String nickName, String lobby) {
+        if (!LazifyConfig.INSTANCE.isDenick()) return;
         if (bordicKey().isEmpty()) return;
 
         Map<String, Object> data = overlayPlayers.get(nickUuid);
         if (data == null) return;
-        if (data.containsKey("superstarDenicked")) return;
+        if (data.containsKey("statDenicked") || data.containsKey("superstarDenicked")) return;
 
         Object pkgObj = data.get(KILLMSG_ID_KEY);
         Object finalsObj = data.get(NICK_FINALS_KEY);
@@ -3477,37 +3524,45 @@ public class OverlayManager {
         final Integer star = starObj instanceof Number ? ((Number) starObj).intValue() : null;
         final String fUuid = nickUuid, fName = nickName, fLobby = lobby;
 
-        new Thread(() -> handleSuperstarDenick(fUuid, fName, fLobby, packageId, finals, beds, woodType, star)).start();
+        new Thread(() -> handleStatDenick(fUuid, fName, fLobby, packageId, finals, beds, woodType, star)).start();
     }
 
-    private void handleSuperstarDenick(String nickUuid, String nickName, String lobby,
-                                       String packageId, int finals, int beds, String woodType,
-                                       Integer star) {
+    private void handleStatDenick(String nickUuid, String nickName, String lobby,
+                                  String packageId, int finals, int beds, String woodType,
+                                  Integer star) {
         try {
             List<BordicSuperstar.Entry> list = BordicSuperstar.fetch(bordicKey());
-            debugFromThread("Superstar denick: searching " + list.size() + " MVP++ players for "
+            debugFromThread("Stat denick: searching " + list.size() + " MVP++ players for "
                     + nickName + " pkg=" + packageId + " finals=" + finals + " beds=" + beds
                     + " star=" + star + " wood=" + woodType);
             BordicSuperstar.MatchResult match = BordicSuperstar.findBestMatch(
                     list, packageId, finals, beds, woodType, star);
             if (match == null) {
-                debugFromThread("Superstar denick: no match for " + nickName);
+                debugFromThread("Stat denick: no match for " + nickName);
                 return;
             }
 
             BordicSuperstar.Entry entry = match.entry;
-            debugFromThread("Superstar denick: " + nickName + " -> " + entry.name
-                    + " (score=" + match.score + " killMsg=" + entry.killMessage
+            debugFromThread("Stat denick: " + nickName + " -> " + entry.name
+                    + " (score=" + match.score + " nearby=" + match.nearbyCount
+                    + " killMsg=" + entry.killMessage
                     + " wood=" + entry.activeWoodType + ")");
 
             if (!isInOverlay(nickUuid) || !currentLobby.equals(lobby)) return;
 
-            applyDenick(nickUuid, entry.uuid, nickName, entry.name, lobby, "superstar");
+            // Too many people within 200 finals+beds (after killmsg/wood/star filters) — skip
+            if (match.isAmbiguous()) {
+                debugFromThread("Stat denick: ambiguous (" + match.nearbyCount
+                        + " within " + BordicSuperstar.NEARBY_STAT_RADIUS + " finals/beds) — not applying");
+                return;
+            }
+
+            applyDenick(nickUuid, entry.uuid, nickName, entry.name, lobby, "stat", true, true);
             Map<String, Object> mark = new ConcurrentHashMap<>();
-            mark.put("superstarDenicked", true);
+            mark.put("statDenicked", true);
             addToOverlay(nickUuid, mark);
         } catch (Exception e) {
-            debugFromThread("Superstar denick exception for " + nickName + ": " + e.getMessage());
+            debugFromThread("Stat denick exception for " + nickName + ": " + e.getMessage());
         }
     }
 
@@ -3715,17 +3770,66 @@ public class OverlayManager {
         if (parsed == null) return false;
 
         Map<String, Object> playerStats = parseStats(parsed, fetchUuid);
+        applyRankLookup(fetchUuid, playerStats);
         preserveDenickDisplay(overlayUuid, playerStats);
-        debugFromThread("Lifetime stats from Bordic session current for " + username);
+        debugFromThread("Lifetime stats from Bordic session current for " + username
+                + " rank=" + playerStats.get("rankStr"));
         if (isInOverlay(overlayUuid) && currentLobby.equals(lobby)) addToOverlay(overlayUuid, playerStats);
         return true;
+    }
+
+    /** Fill rank fields from Abyss/Bordic when lifetime came from session current (no network rank). */
+    private void applyRankLookup(String fetchUuid, Map<String, Object> stats) {
+        if (stats == null) return;
+        Object existing = stats.get("rankStr");
+        if (existing instanceof String && !((String) existing).isEmpty()
+                && !"NORMAL".equalsIgnoreCase((String) existing)
+                && !"NONE".equalsIgnoreCase((String) existing)) {
+            return;
+        }
+        try {
+            StatsProvider.RankInfo rankInfo = StatsProvider.fetchRankInfo(fetchUuid, bordicKey(), hypixelKey());
+            String rank = rankInfo.rank;
+            if (rank == null || rank.isEmpty()) return;
+            boolean showRanks = LazifyConfig.INSTANCE.isShowRanks();
+            String rankPrefix = showRanks
+                    ? (!rankInfo.prefix.isEmpty() ? ColorUtil.colorize(rankInfo.prefix)
+                    : ColorUtil.getFormattedRankFromStr(
+                            rank, rankInfo.rankPlusColor, rankInfo.monthlyRankColor))
+                    : "";
+            String rankColor = ColorUtil.getRankColor(
+                    rank, rankInfo.monthlyRankColor, rankInfo.prefix);
+            stats.put("rankPrefix", rankPrefix);
+            stats.put("rankColor", rankColor);
+            stats.put("rankStr", rank);
+            boolean nickedRow = Boolean.TRUE.equals(stats.get("nicked"));
+            stats.put(RANK_KEY, ColorUtil.formatRankColumn(
+                    nickedRow, rank, rankInfo.rankPlusColor,
+                    rankInfo.monthlyRankColor, rankInfo.prefix));
+            String username = stringVal(stats.get("username"));
+            if (!nickedRow && !username.isEmpty()) {
+                boolean includeRank = showRanks && !rankPrefix.isEmpty()
+                        && !rankPrefix.equals("\u00a77");
+                if (teams.containsKey(fetchUuid) && showTeamColors) {
+                    String existingPlayer = stringVal(stats.get(PLAYER_KEY));
+                    stats.put(PLAYER_KEY, includeRank
+                            ? rankPrefix + " " + existingPlayer : existingPlayer);
+                } else {
+                    String coloredName = rankColor + username;
+                    stats.put(PLAYER_KEY, includeRank
+                            ? rankPrefix + " " + coloredName : coloredName);
+                }
+            }
+        } catch (Exception e) {
+            debugFromThread("Rank lookup failed for " + fetchUuid + ": " + e.getMessage());
+        }
     }
 
     private Map<String, Object> buildApiNickedStats(String username) {
         Map<String, Object> stats = new ConcurrentHashMap<>();
         stats.put("nicked", true);
         stats.put("apinicked", "\u00a7eN");
-        stats.put(URCHIN_KEY, "\u00a7bN");
+        stats.put(URCHIN_KEY, "\u00a7eN");
         stats.put("username", username);
         stats.put(PLAYER_KEY, username);
         stats.put(RANK_KEY, ColorUtil.formatRankColumn(true, ""));
@@ -3748,15 +3852,19 @@ public class OverlayManager {
 
             // Rank
             String rankStr = network.exists() ? network.get("rank", "") : "";
+            String rankPlusColor = network.exists() ? network.get("rankPlusColor", "RED") : "RED";
+            String monthlyRankColor = network.exists() ? network.get("monthlyRankColor", "GOLD") : "GOLD";
+            String rawRankPrefix = network.exists() ? network.get("prefix", "") : "";
             boolean showRanks = LazifyConfig.INSTANCE.isShowRanks();
-            String rankPrefix = showRanks ? ColorUtil.getFormattedRankFromStr(rankStr) : "";
-            String rankColor  = ColorUtil.getRankColor(rankStr);
+            String rankPrefix = showRanks ? ColorUtil.getFormattedRankFromNetwork(network) : "";
+            String rankColor  = ColorUtil.getRankColor(rankStr, monthlyRankColor, rawRankPrefix);
             stats.put("rankPrefix", rankPrefix);
             stats.put("rankColor",  rankColor);
             stats.put("rankStr",    rankStr);
             boolean nickedRow = Boolean.TRUE.equals(
                     overlayPlayers.getOrDefault(uuid, Collections.<String, Object>emptyMap()).get("nicked"));
-            stats.put(RANK_KEY, ColorUtil.formatRankColumn(nickedRow, rankStr));
+            stats.put(RANK_KEY, ColorUtil.formatRankColumn(
+                    nickedRow, rankStr, rankPlusColor, monthlyRankColor, rawRankPrefix));
 
             if (teams.containsKey(uuid) && showTeamColors) {
                 String existing = (String) overlayPlayers.getOrDefault(uuid, Collections.<String, Object>emptyMap()).get(PLAYER_KEY);
@@ -4599,7 +4707,7 @@ public class OverlayManager {
 
     // All setting names (for tab complete)
     public static final String[] ALL_SETTINGS = {
-        "teams","teamprefix","showyourself","showranks","removefinalkill","autotablist","clearonwho","disableinlobby","middleclickshop","skindenick",
+        "teams","teamprefix","showyourself","showranks","removefinalkill","autotablist","clearonwho","disableinlobby","middleclickshop","denick","skindenick",
         "fkdrcolors","autowho","whodelay","hidewho","autopl","hidepl","dodgewarning","dodgethreshold","teamthreatchat","teamthreatthreshold",
         "threatfkdrweight","threatstarweight","threatwinstreakweight","threaturchinweight","threatteamsizeweight",
         "threatencounterweight","threatnickweight","nohurtcam","antidebuff","teamfkdrchat",
@@ -4681,7 +4789,7 @@ public class OverlayManager {
                             Map<String, Object> m = new ConcurrentHashMap<>();
                             m.put("nicked", true);
                             m.put("apinicked", "\u00a7eN");
-                            m.put(URCHIN_KEY, "\u00a7bN");
+                            m.put(URCHIN_KEY, "\u00a7eN");
                             m.put(RANK_KEY, ColorUtil.formatRankColumn(true, ""));
                             m.put("manual", true);
                             addToOverlay(fu, m);
@@ -4891,8 +4999,9 @@ public class OverlayManager {
                     cfg.setDisableInLobby(args.length > 1 ? parseBool(args[1]) : !cfg.isDisableInLobby()); break;
                 case "middleclickshop":
                     cfg.setMiddleClickShop(args.length > 1 ? parseBool(args[1]) : !cfg.isMiddleClickShop()); break;
+                case "denick":
                 case "skindenick":
-                    cfg.setSkinDenick(args.length > 1 ? parseBool(args[1]) : !cfg.isSkinDenick()); break;
+                    cfg.setDenick(args.length > 1 ? parseBool(args[1]) : !cfg.isDenick()); break;
                 case "fkdrcolors":
                     cfg.setFkdrColors(args.length > 1 ? parseBool(args[1]) : !cfg.isFkdrColors()); break;
                 case "autowho":
@@ -5255,7 +5364,7 @@ public class OverlayManager {
 
         // ── Features ──
         print(PREFIX + "\u00a7d Features");
-        print(PREFIX + settingLine("skindenick", c.isSkinDenick())
+        print(PREFIX + settingLine("denick", c.isDenick())
             + settingLine("middleclickshop", c.isMiddleClickShop())
             + settingLine("fkdrcolors", c.isFkdrColors()));
         print(PREFIX + settingLine("autowho", c.isAutoWho())
@@ -5323,10 +5432,8 @@ public class OverlayManager {
             + settingLine("fkdrdecimals", String.valueOf(c.getFkdrDecimals()))
             + settingLine("abbrev", c.isAbbreviateNumbers())
             + settingLine("pingstyle", c.getPingStyle() == 1 ? "ms" : "number"));
-        String[] fc = c.getFkdrColors();
-        StringBuilder fcLine = new StringBuilder(" \u00a77fkdrcolor ");
-        for (int i = 0; i < 7; i++) fcLine.append("\u00a7").append(fc[i]).append("\u2588");
-        print(PREFIX + fcLine.toString() + " \u00a77(/ov fkdrcolor)");
+        print(PREFIX + settingLine("fkdrscale", c.getFkdrScale().serialize())
+                + "\u00a77(/ov fkdrcolor for standard 7 tiers)");
 
         // ── Columns ──
         print(PREFIX + "\u00a7d Columns \u00a77(/ov col <name>)");
@@ -5375,27 +5482,32 @@ public class OverlayManager {
     }
 
     private static final String VALID_COLOR_CODES = "0123456789abcdef";
-    private static final String[] FKDR_TIER_NAMES = {
-        "< 1.4", "1.4 - 2.4", "2.4 - 5", "5 - 10", "10 - 100", "100 - 1000", "1000+"
-    };
 
     private void handleFkdrColor(String[] args) {
         LazifyConfig cfg = LazifyConfig.INSTANCE;
-        String[] colors = cfg.getFkdrColors();
+        ThresholdColorScale scale = cfg.getFkdrScale();
         if (args.length < 2) {
-            print(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dFKDR Colors \u00a77\u2500\u2500\u2500  \u00a77/ov fkdrcolor <1-7> <0-f>");
-            for (int i = 0; i < 7; i++) {
-                print(PREFIX + " \u00a73" + (i + 1) + " \u00a77(" + FKDR_TIER_NAMES[i] + ") \u00a7" + colors[i] + "\u2588\u2588 " + colors[i]);
+            print(PREFIX + "\u00a77\u2500\u2500\u2500 \u00a7dFKDR Colors \u00a77\u2500\u2500\u2500  \u00a77/ov fkdrcolor <tier> <0-f>");
+            for (int i = 0; i < scale.size(); i++) {
+                ThresholdColorScale.Tier t = scale.get(i);
+                print(PREFIX + " \u00a73" + (i + 1) + " \u00a77(>= "
+                        + ColorUtil.formatDoubleStr(t.min) + ") \u00a7f"
+                        + t.r + "," + t.g + "," + t.b);
             }
             return;
         }
         int tier;
         try { tier = Integer.parseInt(args[1]); } catch (NumberFormatException e) {
-            print(PREFIX + "\u00a7cTier must be 1-7."); return;
+            print(PREFIX + "\u00a7cTier must be 1-" + scale.size() + "."); return;
         }
-        if (tier < 1 || tier > 7) { print(PREFIX + "\u00a7cTier must be 1-7."); return; }
+        if (tier < 1 || tier > scale.size()) {
+            print(PREFIX + "\u00a7cTier must be 1-" + scale.size() + "."); return;
+        }
+        ThresholdColorScale.Tier current = scale.get(tier - 1);
         if (args.length < 3) {
-            print(PREFIX + "\u00a7eTier " + tier + " (" + FKDR_TIER_NAMES[tier - 1] + "): \u00a7" + colors[tier - 1] + "\u2588\u2588 " + colors[tier - 1]);
+            print(PREFIX + "\u00a7eTier " + tier + " (>= "
+                    + ColorUtil.formatDoubleStr(current.min) + "): \u00a7f"
+                    + current.r + "," + current.g + "," + current.b);
             return;
         }
         String code = args[2].toLowerCase();
@@ -5411,8 +5523,13 @@ public class OverlayManager {
             case 6: cfg.setFkdrColor6(code); break;
             case 7: cfg.setFkdrColor7(code); break;
         }
+        int[] rgb = ThresholdColorScale.mcCodeToRgb(code.charAt(0));
+        scale.set(tier - 1, new ThresholdColorScale.Tier(
+                current.min, rgb[0], rgb[1], rgb[2]));
         cfg.save(); defaultSettings();
-        print(PREFIX + "\u00a7eFKDR tier " + tier + " (" + FKDR_TIER_NAMES[tier - 1] + ") \u00a72\u2192\u00a7 " + code + "\u2588\u2588 " + code);
+        print(PREFIX + "\u00a7eFKDR tier " + tier + " (>= "
+                + ColorUtil.formatDoubleStr(current.min) + ") \u00a72\u2192\u00a7"
+                + code + "\u2588\u2588 \u00a77" + rgb[0] + "," + rgb[1] + "," + rgb[2]);
     }
 
     private void printColStatus() {
@@ -5496,7 +5613,8 @@ public class OverlayManager {
             case "clearonwho":       return boolStr(c.isClearOnWho());
             case "disableinlobby":   return boolStr(c.isDisableInLobby());
             case "middleclickshop": return boolStr(c.isMiddleClickShop());
-            case "skindenick":      return boolStr(c.isSkinDenick());
+            case "denick":
+            case "skindenick":      return boolStr(c.isDenick());
             case "fkdrcolors":      return boolStr(c.isFkdrColors());
             case "autowho":         return boolStr(c.isAutoWho());
             case "whodelay":        return "\u00a7e" + c.getWhoDelay() + "s";
